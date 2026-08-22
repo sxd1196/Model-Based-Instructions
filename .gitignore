@@ -1,0 +1,42 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test / build output
+coverage
+.vite
+*.tsbuildinfo
+
+# CAD working files — converted geometry does not belong in git.
+# Keep source STEP in PLM, keep converted glTF next to the project locally.
+*.step
+*.stp
+*.STEP
+*.STP
+*.sldasm
+*.SLDASM
+*.sldprt
+*.SLDPRT
+*.glb
+*.gltf
+!src/**/*.glb
+
+# Exported artifacts
+*.webm
+*.assemblyproj.json
+*-instructions.html
