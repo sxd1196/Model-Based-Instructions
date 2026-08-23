@@ -226,6 +226,17 @@ export async function importCadFile(
     triangleCount += idx ? idx.count / 3 : mesh.geometry.attributes.position.count / 3;
   }
 
+  // CAD files repeat names for instanced parts (two identical handles both
+  // arrive as "faucet_handle_standard_handle"). Suffix duplicates _2, _3 ...
+  // so every row in the tree is distinguishable and name-based scene lookup
+  // is unambiguous. The FIRST instance keeps the bare name.
+  const nameCounts = new Map<string, number>();
+  for (const mesh of built) {
+    const n = (nameCounts.get(mesh.name) ?? 0) + 1;
+    nameCounts.set(mesh.name, n);
+    if (n > 1) mesh.name = `${mesh.name}_${n}`;
+  }
+
   // Rebuild the assembly hierarchy from the OCCT node tree.
   const used = new Set<number>();
   if (result.root) {
@@ -288,6 +299,23 @@ function attachNode(
   used: Set<number>,
   isRoot = false,
 ): void {
+  const meshIndices = node.meshes ?? [];
+  const children = node.children ?? [];
+
+  // COLLAPSE redundant wrappers: OCCT wraps every solid in a node carrying
+  // the same name as its single mesh ("faucet_long" group -> "faucet_long"
+  // mesh), which doubles every row in the assembly tree. A leaf node with
+  // exactly one mesh contributes nothing structural — attach the mesh
+  // directly to the parent instead.
+  if (!isRoot && children.length === 0 && meshIndices.length === 1) {
+    const mesh = meshes[meshIndices[0]];
+    if (mesh && !used.has(meshIndices[0])) {
+      used.add(meshIndices[0]);
+      parent.add(mesh);
+    }
+    return;
+  }
+
   // The OCCT root is a synthetic wrapper; do not add a redundant group for it.
   const target = isRoot
     ? parent
@@ -298,7 +326,7 @@ function attachNode(
         return g;
       })();
 
-  for (const meshIndex of node.meshes ?? []) {
+  for (const meshIndex of meshIndices) {
     const mesh = meshes[meshIndex];
     if (mesh && !used.has(meshIndex)) {
       used.add(meshIndex);
@@ -306,7 +334,7 @@ function attachNode(
     }
   }
 
-  for (const child of node.children ?? []) {
+  for (const child of children) {
     attachNode(child, target, meshes, used);
   }
 }

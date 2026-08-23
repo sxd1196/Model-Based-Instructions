@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as THREE from 'three';
 import { describeFile, importCadFile } from './importCad';
-import { buildAssemblyFromScene } from './loadGltf';
+import { buildAssemblyFromScene, indexScene } from './loadGltf';
 
 const fixture = () => {
   const buf = readFileSync(join(process.cwd(), 'src/cad/fixtures/two_boxes.step'));
@@ -115,5 +115,56 @@ describe('importCadFile (real OpenCascade WASM)', () => {
   it('reports a useful error for a corrupt STEP file', async () => {
     const junk = new TextEncoder().encode('this is not a step file').buffer;
     await expect(importCadFile(junk, 'bad.step')).rejects.toThrow(/OpenCascade|AP214|AP242/);
+  }, 30_000);
+});
+
+describe('instanced parts with duplicate names (real CAD pattern)', () => {
+  // Two identical components arrive with IDENTICAL names (e.g. two
+  // "faucet_handle_standard_handle" instances). Without deduplication,
+  // name-based scene lookup is ambiguous: clicking the second instance
+  // highlighted the first, and the tree showed indistinguishable rows.
+  const dupes = () => {
+    const buf = readFileSync(join(process.cwd(), 'src/cad/fixtures/two_dupes.step'));
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  };
+
+  it('suffixes duplicate names so each instance is unique', async () => {
+    const result = await importCadFile(dupes(), 'two_dupes.step');
+    const names: string[] = [];
+    result.scene.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) names.push(o.name);
+    });
+    expect(names.sort()).toEqual(['Widget', 'Widget_2']);
+  }, 30_000);
+
+  it('every part maps to its OWN scene object (selection is unambiguous)', async () => {
+    const result = await importCadFile(dupes(), 'two_dupes.step');
+    const { assembly } = buildAssemblyFromScene(
+      result.scene as THREE.Group, 'mem://dupes', { name: 'Dupes' },
+    );
+    const index = indexScene(result.scene, assembly);
+
+    const meshParts = Object.values(assembly.parts).filter((p) => !p.isGroup);
+    const objects = meshParts.map((p) => index.get(p.id));
+    expect(objects.every(Boolean)).toBe(true);
+    // The old bug: both ids resolved to the SAME object.
+    expect(new Set(objects).size).toBe(meshParts.length);
+  }, 30_000);
+
+  it('collapses OCCT single-mesh wrapper nodes (no doubled tree rows)', async () => {
+    // OCCT wraps each solid in a node named identically to its mesh; without
+    // collapsing, every part shows twice in the assembly tree.
+    const result = await importCadFile(dupes(), 'two_dupes.step');
+
+    let groups = 0;
+    let meshes = 0;
+    result.scene.traverse((o) => {
+      if (o === result.scene) return;
+      if ((o as THREE.Mesh).isMesh) meshes++;
+      else groups++;
+    });
+    expect(meshes).toBe(2);
+    // The only surviving group (if any) is a real container, not a wrapper.
+    expect(groups).toBeLessThanOrEqual(1);
   }, 30_000);
 });

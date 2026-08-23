@@ -125,8 +125,12 @@ function addPart(name, ox, oy, oz, w, h, d) {
   emit(`SHAPE_DEFINITION_REPRESENTATION(${shape},${rep})`);
 }
 
-addPart('BlockA', 0, 0, 0, 50, 40, 30);
-addPart('BlockB', 80, 0, 0, 20, 20, 20);
+// Part names come from argv so fixtures with DUPLICATE names (instanced
+// parts, like two identical faucet handles) can be generated too.
+const names = process.argv.slice(2);
+const [nameA, nameB] = names.length === 2 ? names : ['BlockA', 'BlockB'];
+addPart(nameA, 0, 0, 0, 50, 40, 30);
+addPart(nameB, 80, 0, 0, 20, 20, 20);
 
 const out = `ISO-10303-21;
 HEADER;

@@ -135,3 +135,16 @@ in the app — the app has no scale factor by design (AGENTS.md §2.6).
 - [ ] Part count roughly matches the CAD BOM
 - [ ] Selecting a part in the tree highlights the right geometry
 - [ ] Model appears at a sane size relative to the grid
+
+## Instanced parts and duplicate names (2026-08-23)
+
+CAD files repeat names for instanced components — two identical handles both
+arrive as . The importer suffixes duplicates
+(, , ...) at load time so tree rows are distinguishable and
+name-based scene lookup is unambiguous; the first instance keeps the bare
+name. OCCT also wraps every solid in a node named identically to its single
+mesh; those wrappers are collapsed so each part appears ONCE in the tree.
+
+Renaming instances in CAD before export is still better practice — the suffix
+is assigned by encounter order, which can change if the file is re-exported
+with parts reordered.

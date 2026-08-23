@@ -10,11 +10,18 @@ import { PivotControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '@/state/store';
 import { indexScene } from '@/cad/loadGltf';
-import { applyDragPolicy, effectiveDragMove, resolveGizmoState, selectableParts } from '@/domain/authoring';
-import { groupMoveFromDrag } from '@/domain/rigid';
+import {
+  applyDragPolicy,
+  clusterByParentFrame,
+  effectiveDragMove,
+  parentWorldTransform,
+  resolveGizmoState,
+  selectableParts,
+} from '@/domain/authoring';
+import { clusterMoveFromDrag } from '@/domain/rigid';
 import { beginPreview, endPreview, updatePreview } from './dragPreview';
 import { distance, liftOffSurface, snapToFeature } from '@/domain/snapping';
-import type { Assembly, Vec3 } from '@/domain/schema';
+import type { Assembly, Move, Vec3 } from '@/domain/schema';
 
 interface Props {
   scene: THREE.Object3D | null;
@@ -256,40 +263,55 @@ export function DragGizmo({ scene, assembly }: Props) {
     matrix.current.compose(_acc, IDENT_Q, ONE);
   });
 
-  /** Recompute the provisional Move for the current handle pose. */
-  const previewFromHandle = useCallback(() => {
+  /** Recompute the provisional per-part Moves for the current handle pose. */
+  const previewFromHandle = useCallback((): Array<[string, Move]> | null => {
     const st = useStore.getState();
     if (!st.sequence) return null;
+    const policy = { snap: st.snap, axisLock: st.axisLock };
 
     if (targetId) {
       const node = st.sequence.assembly.parts[targetId];
       if (!node) return null;
       // Dragged world rotation = drag delta on top of where the part started.
       _mquat.copy(lastQuat.current).multiply(startQuat.current);
-      return effectiveDragMove(
+      const move = effectiveDragMove(
         node.restTranslate,
         node.restRotate,
         [lastPos.current.x, lastPos.current.y, lastPos.current.z],
         [_mquat.x, _mquat.y, _mquat.z, _mquat.w],
-        { snap: st.snap, axisLock: st.axisLock },
+        policy,
+        parentWorldTransform(st.sequence.assembly, targetId),
       );
+      return [[targetId, move]];
     }
 
-    // Group: compose the drag delta with whatever the group's track already
-    // holds — the same prior commitGroupDrag will use.
+    // Group: one local Move PER PARENT CLUSTER expressing the same world
+    // motion — the exact math commitGroupDrag uses, so preview == commit.
     const parts = selectableParts(st.sequence.assembly, selection);
     const op = st.sequence.operations.find((o) => o.id === st.activeOperationId);
-    const existing = op?.tracks.find(
-      (t) => t.parts.length === parts.length && t.parts.every((p) => parts.includes(p)),
-    );
     const s = dragStart.current;
-    const raw = groupMoveFromDrag(
-      existing?.to ?? null,
-      [s.x, s.y, s.z],
-      [lastPos.current.x, lastPos.current.y, lastPos.current.z],
-      [lastQuat.current.x, lastQuat.current.y, lastQuat.current.z, lastQuat.current.w],
-    );
-    return applyDragPolicy(raw, { snap: st.snap, axisLock: st.axisLock });
+    const gStart: [number, number, number] = [s.x, s.y, s.z];
+    const gEnd: [number, number, number] = [
+      lastPos.current.x, lastPos.current.y, lastPos.current.z,
+    ];
+    const gRot: [number, number, number, number] = [
+      lastQuat.current.x, lastQuat.current.y, lastQuat.current.z, lastQuat.current.w,
+    ];
+
+    const out: Array<[string, Move]> = [];
+    for (const cluster of clusterByParentFrame(st.sequence.assembly, parts)) {
+      const existing = op?.tracks.find(
+        (t) =>
+          t.parts.length === cluster.parts.length &&
+          t.parts.every((p) => cluster.parts.includes(p)),
+      );
+      const move = applyDragPolicy(
+        clusterMoveFromDrag(existing?.to ?? null, cluster.frame, gStart, gEnd, gRot),
+        policy,
+      );
+      for (const id of cluster.parts) out.push([id, move]);
+    }
+    return out;
   }, [targetId, selection]);
 
   const onDragStart = useCallback(() => {
@@ -304,14 +326,8 @@ export function DragGizmo({ scene, assembly }: Props) {
     if (target) target.getWorldQuaternion(startQuat.current);
     else startQuat.current.identity();
 
-    const st = useStore.getState();
-    const parts = targetId
-      ? [targetId]
-      : st.sequence
-        ? selectableParts(st.sequence.assembly, selection)
-        : [];
-    beginPreview(parts);
-  }, [pause, target, targetId, selection]);
+    beginPreview();
+  }, [pause, target]);
 
   const onDrag = useCallback(
     (l: THREE.Matrix4) => {
@@ -324,8 +340,8 @@ export function DragGizmo({ scene, assembly }: Props) {
       // this frame, so the geometry — not just the handle — follows the
       // mouse. Snap and axis lock shape it here too, so what you see
       // stepping IS what will be committed.
-      const move = previewFromHandle();
-      if (move) updatePreview(move);
+      const moves = previewFromHandle();
+      if (moves) updatePreview(moves);
     },
     [previewFromHandle],
   );

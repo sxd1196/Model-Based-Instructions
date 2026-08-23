@@ -7,6 +7,8 @@ import { buildAssemblyFromScene } from '@/cad/loadGltf';
 import { makeDemoAssembly } from '@/cad/demo';
 import { resolveFrame, resolveAnnotationPoint } from '@/domain/evaluate';
 import { composePartTransform, quatFromAxisAngle } from '@/domain/transform';
+import { parentWorldTransform } from '@/domain/authoring';
+import { applyRigid } from '@/domain/rigid';
 import { IDENTITY_QUAT, type Vec3 } from '@/domain/schema';
 
 const { root, name } = makeDemoAssembly();
@@ -35,29 +37,53 @@ describe('commitGroupDrag', () => {
       .filter((p) => /^Bolt_M8_\d+_(Shank|Head)$/.test(p.name))
       .map((p) => p.id);
 
-  it('puts the whole group on ONE track', () => {
+  // Bolts live in 8 separate Bolt_M8_NN parent groups placed on a circle, so
+  // a drag spanning them writes one track PER PARENT CLUSTER (8 here). One
+  // shared world-space Move was the scattered-bolt-circle bug: a Move is
+  // applied in each part's PARENT frame, so parts under offset parents each
+  // need their own local Move to express the same world motion.
+  const CLUSTERS = 8;
+
+  /** World position of a part under the frame at time t. */
+  const worldAt = (id: string, t: number): Vec3 => {
+    const frame = resolveFrame(s().sequence!, t);
+    const node = assembly.parts[id];
+    const move = frame.poses.get(id) ?? {
+      translate: [0, 0, 0], rotate: IDENTITY_QUAT, pivot: [0, 0, 0],
+    };
+    const local = composePartTransform(node.restTranslate, node.restRotate, move);
+    const parent = parentWorldTransform(assembly, id);
+    const placed = applyRigid(
+      { rotation: parent.rotation, translation: parent.position },
+      local.position,
+    );
+    return placed;
+  };
+
+  it('writes one track per parent cluster covering the whole group', () => {
     s().addOperation();
     const parts = boltParts();
     s().commitGroupDrag(parts, [0, 0, 0], [0, 0, 120], IDENTITY_QUAT);
 
     const tracks = s().sequence!.operations[0].tracks;
-    expect(tracks).toHaveLength(1);
-    expect(tracks[0].parts.length).toBe(parts.length);
+    expect(tracks).toHaveLength(CLUSTERS);
+    expect(tracks.flatMap((t) => t.parts).sort()).toEqual([...parts].sort());
   });
 
-  it('moves every member by the same translation', () => {
+  it('moves every member by the same world translation', () => {
     s().addOperation({ duration: 1, dwell: 0 });
     const parts = boltParts();
     s().commitGroupDrag(parts, [0, 0, 0], [0, 0, 75], IDENTITY_QUAT);
 
-    const frame = resolveFrame(s().sequence!, 1);
     for (const id of parts) {
-      const move = frame.poses.get(id)!;
-      expect(move.translate[2]).toBeCloseTo(75);
+      const before = worldAt(id, 0);
+      const after = worldAt(id, 1);
+      expect(after[2] - before[2]).toBeCloseTo(75, 4);
+      expect(after[0] - before[0]).toBeCloseTo(0, 4);
     }
   });
 
-  it('PRESERVES relative distances under a rotating drag', () => {
+  it('PRESERVES relative WORLD distances under a rotating drag', () => {
     s().addOperation({ duration: 1, dwell: 0 });
     const parts = boltParts();
     s().commitGroupDrag(
@@ -67,44 +93,37 @@ describe('commitGroupDrag', () => {
       quatFromAxisAngle([0.2, 1, 0.3], 1.1),
     );
 
-    const frame = resolveFrame(s().sequence!, 1);
-    const posed = parts.map((id) => {
-      const node = assembly.parts[id];
-      const out = composePartTransform(
-        node.restTranslate, node.restRotate, frame.poses.get(id)!,
-      );
-      return out.position;
-    });
-
+    // Rigidity must hold in WORLD space across parent clusters.
+    const before = parts.map((id) => worldAt(id, 0));
+    const after = parts.map((id) => worldAt(id, 1));
     for (let i = 0; i < parts.length; i++) {
       for (let j = i + 1; j < parts.length; j++) {
-        expect(dist(posed[i], posed[j])).toBeCloseTo(
-          dist(assembly.parts[parts[i]].restTranslate, assembly.parts[parts[j]].restTranslate),
-          3,
-        );
+        expect(dist(after[i], after[j])).toBeCloseTo(dist(before[i], before[j]), 3);
       }
     }
   });
 
-  it('a second group drag accumulates on the same track', () => {
+  it('a second group drag accumulates on the same tracks', () => {
     s().addOperation({ duration: 1, dwell: 0 });
     const parts = boltParts();
     s().commitGroupDrag(parts, [0, 0, 0], [0, 0, 50], IDENTITY_QUAT);
     s().commitGroupDrag(parts, [0, 0, 50], [0, 0, 90], IDENTITY_QUAT);
 
-    expect(s().sequence!.operations[0].tracks).toHaveLength(1);
-    const frame = resolveFrame(s().sequence!, 1);
-    expect(frame.poses.get(parts[0])!.translate[2]).toBeCloseTo(90);
+    // Accumulates in place: still one track per cluster, not doubled.
+    expect(s().sequence!.operations[0].tracks).toHaveLength(CLUSTERS);
+    const id = parts[0];
+    expect(worldAt(id, 1)[2] - worldAt(id, 0)[2]).toBeCloseTo(90, 4);
   });
 
-  it('a DIFFERENT group gets its own track', () => {
+  it('a DIFFERENT group gets its own tracks', () => {
     s().addOperation();
     s().commitGroupDrag(boltParts(), [0, 0, 0], [0, 0, 50], IDENTITY_QUAT);
     s().commitGroupDrag(
       [idOf('Cover_Plate'), idOf('Cover_Gasket')],
       [0, 0, 0], [0, 0, 30], IDENTITY_QUAT,
     );
-    expect(s().sequence!.operations[0].tracks).toHaveLength(2);
+    // 8 bolt clusters + 1 cover cluster (plate+gasket share SUB_Cover).
+    expect(s().sequence!.operations[0].tracks).toHaveLength(CLUSTERS + 1);
   });
 
   it('expands a sub-assembly group id into its meshes', () => {
@@ -140,13 +159,13 @@ describe('commitGroupDrag', () => {
     expect(s().sequence!.operations).toHaveLength(0);
     s().commitGroupDrag(boltParts(), [0, 0, 0], [0, 0, 50], IDENTITY_QUAT);
     expect(s().sequence!.operations).toHaveLength(1);
-    expect(s().sequence!.operations[0].tracks).toHaveLength(1);
+    expect(s().sequence!.operations[0].tracks).toHaveLength(CLUSTERS);
   });
 
   it('is undoable in one step', () => {
     s().addOperation();
     s().commitGroupDrag(boltParts(), [0, 0, 0], [0, 0, 80], IDENTITY_QUAT);
-    expect(s().sequence!.operations[0].tracks).toHaveLength(1);
+    expect(s().sequence!.operations[0].tracks).toHaveLength(CLUSTERS);
     s().undo();
     expect(s().sequence!.operations[0].tracks).toHaveLength(0);
   });

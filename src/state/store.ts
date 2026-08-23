@@ -31,13 +31,15 @@ import { totalDuration } from '@/domain/evaluate';
 import {
   centroidOf,
   isIdentityMove,
-  moveFromDrag,
   applyDragPolicy,
+  clusterByParentFrame,
+  effectiveDragMove,
+  parentWorldTransform,
   radialExplode,
   resolveSelectionTarget,
   selectableParts,
 } from '@/domain/authoring';
-import { groupMoveFromDrag } from '@/domain/rigid';
+import { clusterMoveFromDrag } from '@/domain/rigid';
 
 const uid = () => crypto.randomUUID();
 
@@ -264,21 +266,20 @@ export const useStore = create<State & Actions>()(
         const node = sequence.assembly.parts[partId];
         if (!node) return;
 
-        // Pivot at the part's REST POSITION, not the world origin. A rotate
-        // gizmo leaves the handle in place, so an origin pivot turns a pure
-        // spin into a large translate — which axis lock then flattens onto
-        // one axis and snap quantizes, flinging the part across the scene.
-        let move: Move = moveFromDrag(
+        // effectiveDragMove: world pose -> parent frame -> inverse pose
+        // composition pivoted at rest, shaped by snap/axis-lock policy.
+        // Shared with the live preview, so the part lands exactly where the
+        // preview showed it. The parent frame matters for nested parts —
+        // without it a drag on a part inside an offset sub-assembly lands
+        // displaced by the parent's own offset.
+        const move: Move = effectiveDragMove(
           node.restTranslate,
           node.restRotate,
           position,
           rotation,
-          node.restTranslate,
+          { snap: state.snap, axisLock: state.axisLock },
+          parentWorldTransform(sequence.assembly, partId),
         );
-
-        // Shared with the live preview (applyDragPolicy is the single source
-        // of truth), so the part lands exactly where the preview showed it.
-        move = applyDragPolicy(move, { snap: state.snap, axisLock: state.axisLock });
 
         // A drag that ends where it started should not create a dead track —
         // nor an empty step. Bail BEFORE auto-creating an operation.
@@ -339,45 +340,61 @@ export const useStore = create<State & Actions>()(
         if (!parts.length) return;
 
         const op = get().sequence?.operations.find((o) => o.id === opId);
-        // Reuse the track only if it drives EXACTLY this group, so dragging a
-        // sub-assembly never silently rewrites an unrelated part's motion.
-        const existing = op?.tracks.find(
-          (t) =>
-            t.parts.length === parts.length &&
-            t.parts.every((p) => parts.includes(p)),
-        );
 
-        let move = groupMoveFromDrag(
-          existing?.to ?? null,
-          gizmoStart,
-          gizmoEnd,
-          gizmoRotation,
-        );
+        // ONE TRACK PER PARENT CLUSTER. The gizmo yields one WORLD transform,
+        // but a Move is applied in each part's PARENT frame. Feeding the
+        // world transform to every part is only correct when all parents sit
+        // at the world origin — rotating SUB_Cover scattered its bolt circle
+        // because each bolt group spun about its own offset origin.
+        const clusters = clusterByParentFrame(sequence.assembly, parts);
+        const policy = { snap: state.snap, axisLock: state.axisLock };
 
-        // Same shared policy as the live preview — see applyDragPolicy.
-        move = applyDragPolicy(move, { snap: state.snap, axisLock: state.axisLock });
-
-        if (isIdentityMove(move) && !existing) return;
+        const updates: Array<{ parts: string[]; move: Move }> = [];
+        for (const cluster of clusters) {
+          const existing = op?.tracks.find(
+            (t) =>
+              t.parts.length === cluster.parts.length &&
+              t.parts.every((p) => cluster.parts.includes(p)),
+          );
+          const move = applyDragPolicy(
+            clusterMoveFromDrag(
+              existing?.to ?? null,
+              cluster.frame,
+              gizmoStart,
+              gizmoEnd,
+              gizmoRotation,
+            ),
+            policy,
+          );
+          if (!isIdentityMove(move) || existing) {
+            updates.push({ parts: cluster.parts, move });
+          }
+        }
+        if (!updates.length) return;
 
         checkpoint('Drag group');
         set((s) => {
           const target = findOp(s, opId);
           if (!target) return;
-          const track = target.tracks.find(
-            (t) => t.parts.length === parts.length && t.parts.every((p) => parts.includes(p)),
-          );
-          if (track) {
-            track.to = move;
-          } else {
-            target.tracks.push({
-              id: uid(),
-              parts,
-              from: IDENTITY_MOVE,
-              to: move,
-              start: 0,
-              end: 1,
-              easing: 'easeInOut',
-            });
+          for (const u of updates) {
+            const track = target.tracks.find(
+              (t) =>
+                t.parts.length === u.parts.length &&
+                t.parts.every((p) => u.parts.includes(p)),
+            );
+            if (track) {
+              track.to = u.move;
+            } else {
+              target.tracks.push({
+                id: uid(),
+                parts: u.parts,
+                from: IDENTITY_MOVE,
+                to: u.move,
+                start: 0,
+                end: 1,
+                easing: 'easeInOut',
+              });
+            }
           }
         });
 

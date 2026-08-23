@@ -125,3 +125,82 @@ export function applyRigid(rigid: Rigid, point: Vec3): Vec3 {
     r[2] + rigid.translation[2],
   ];
 }
+
+// ---------------------------------------------------------------- frames
+
+const conj = (q: Quat): Quat => [-q[0], -q[1], -q[2], q[3]];
+
+/** A node's world placement: x_world = rotation * x_local + position. */
+export interface Frame {
+  position: Vec3;
+  rotation: Quat;
+}
+
+export const WORLD_FRAME: Frame = { position: [0, 0, 0], rotation: IDENTITY_QUAT };
+
+/**
+ * Re-express a WORLD-space rigid transform in a parent's LOCAL frame.
+ *
+ * Why this exists: a Move is applied by the evaluator in the part's PARENT
+ * frame (rest poses are local), but the gizmo lives in world space. Feeding a
+ * world rotation straight into parts whose parents sit away from the origin
+ * rotates each part about its own parent origin — the bug that scattered a
+ * bolt circle into confetti when rotating SUB_Cover 90°.
+ *
+ *   x_w = Pq * x_l + Pp          (parent placement)
+ *   W(x) = R*x + d               (world drag)
+ *   x_l' = Pq^-1 ( R (Pq x_l + Pp) + d − Pp )
+ *        = (Pq^-1 R Pq) x_l + Pq^-1 (R Pp + d − Pp)
+ */
+export function rigidToParentFrame(rigid: Rigid, parent: Frame): Rigid {
+  const iq = conj(parent.rotation);
+  const rotation = multiplyQuat(iq, multiplyQuat(rigid.rotation, parent.rotation));
+
+  const rp = applyQuat(parent.position, rigid.rotation);
+  const worldDelta: Vec3 = [
+    rp[0] + rigid.translation[0] - parent.position[0],
+    rp[1] + rigid.translation[1] - parent.position[1],
+    rp[2] + rigid.translation[2] - parent.position[2],
+  ];
+  return { rotation, translation: applyQuat(worldDelta, iq) };
+}
+
+/** Re-express a world pose (position + orientation) in a parent's local frame. */
+export function poseToParentFrame(
+  worldPos: Vec3,
+  worldRot: Quat,
+  parent: Frame,
+): { position: Vec3; rotation: Quat } {
+  const iq = conj(parent.rotation);
+  const rel: Vec3 = [
+    worldPos[0] - parent.position[0],
+    worldPos[1] - parent.position[1],
+    worldPos[2] - parent.position[2],
+  ];
+  return {
+    position: applyQuat(rel, iq),
+    rotation: multiplyQuat(iq, worldRot),
+  };
+}
+
+/**
+ * The LOCAL Move for one parent-frame cluster of a group drag.
+ *
+ * The gizmo produces ONE world rigid transform; every part it drags must end
+ * up in the pose that transform dictates. Parts under different parents need
+ * DIFFERENT local Moves expressing the same world motion — which is why a
+ * group drag now writes one track per parent cluster rather than one track
+ * total. Shared by the live preview and the commit path.
+ */
+export function clusterMoveFromDrag(
+  prior: Move | null,
+  parent: Frame,
+  gizmoStart: Vec3,
+  gizmoEnd: Vec3,
+  gizmoRotation: Quat,
+): Move {
+  const worldDrag = gizmoDragToRigid(gizmoStart, gizmoEnd, gizmoRotation);
+  const localDrag = rigidToParentFrame(worldDrag, parent);
+  const priorRigid = prior ? moveToRigid(prior) : IDENTITY_RIGID;
+  return rigidToMove(composeRigid(priorRigid, localDrag));
+}

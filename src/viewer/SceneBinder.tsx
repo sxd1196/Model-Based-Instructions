@@ -87,17 +87,17 @@ function applyPoses(
   index: Map<string, THREE.Object3D>,
   rest: Map<string, { p: THREE.Vector3; q: THREE.Quaternion }>,
 ) {
-  // During a gizmo drag the provisional Move for the dragged parts overrides
+  // During a gizmo drag the provisional Moves for the dragged parts override
   // the evaluated frame, so the GEOMETRY follows the mouse in real time
-  // rather than jumping on release. Same Move shape, same composition below.
-  const preview = dragPreview.active && dragPreview.move ? dragPreview : null;
+  // rather than jumping on release. Per-part moves: clusters under different
+  // parents carry different local Moves for the same world motion.
+  const preview = dragPreview.active ? dragPreview : null;
 
   for (const [id, obj] of index) {
     const base = rest.get(id);
     if (!base) continue;
 
-    const move =
-      preview && preview.parts.has(id) ? preview.move! : frame.poses.get(id);
+    const move = preview?.moves.get(id) ?? frame.poses.get(id);
 
     if (!move) {
       // Untouched: sit at rest. Cheap early-out for the common case.

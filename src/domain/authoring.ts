@@ -8,6 +8,7 @@
 import type { Assembly, Move, PartNode, Quat, Vec3 } from './schema';
 import { IDENTITY_QUAT } from './schema';
 import { applyQuat, multiplyQuat } from './transform';
+import { poseToParentFrame, WORLD_FRAME, type Frame } from './rigid';
 
 // ---------------------------------------------------------------- selection
 
@@ -196,20 +197,79 @@ export function applyDragPolicy(move: Move, policy: DragPolicy): Move {
 }
 
 /**
- * The complete authored Move for a SINGLE part drag: inverse of the pose
- * composition, pivoted at the part's rest position, shaped by policy.
+ * The complete authored Move for a SINGLE part drag: the world pose is first
+ * re-expressed in the part's parent frame (rest poses are local — feeding a
+ * world pose to a nested part drags it by its parent's offset), then the
+ * pose composition is inverted, pivoted at the part's rest position, and
+ * shaped by policy.
  */
 export function effectiveDragMove(
   restTranslate: Vec3,
   restRotate: Quat,
-  draggedPosition: Vec3,
-  draggedRotation: Quat,
+  draggedWorldPosition: Vec3,
+  draggedWorldRotation: Quat,
   policy: DragPolicy,
+  parent: Frame = WORLD_FRAME,
 ): Move {
+  const local = poseToParentFrame(draggedWorldPosition, draggedWorldRotation, parent);
   return applyDragPolicy(
-    moveFromDrag(restTranslate, restRotate, draggedPosition, draggedRotation, restTranslate),
+    moveFromDrag(restTranslate, restRotate, local.position, local.rotation, restTranslate),
     policy,
   );
+}
+
+/**
+ * The world placement of a part's PARENT, composed from rest transforms up
+ * the assembly tree. Group nodes are never animated (tracks target meshes),
+ * so the rest chain IS the parent's world placement.
+ */
+export function parentWorldTransform(assembly: Assembly, partId: string): Frame {
+  const chain: PartNode[] = [];
+  let cur = assembly.parts[partId];
+  while (cur?.parentId) {
+    const parent = assembly.parts[cur.parentId];
+    if (!parent) break;
+    chain.unshift(parent);
+    cur = parent;
+  }
+
+  let position: Vec3 = [0, 0, 0];
+  let rotation: Quat = [0, 0, 0, 1];
+  for (const node of chain) {
+    const placed = applyQuat(node.restTranslate, rotation);
+    position = [
+      position[0] + placed[0],
+      position[1] + placed[1],
+      position[2] + placed[2],
+    ];
+    rotation = multiplyQuat(rotation, node.restRotate);
+  }
+  return { position, rotation };
+}
+
+/**
+ * Group a selection by parent FRAME (not parent id): parts under different
+ * groups that happen to share a world placement can share a track. In
+ * practice keys are parent ids, but the frame is what actually matters to
+ * the math.
+ */
+export function clusterByParentFrame(
+  assembly: Assembly,
+  partIds: string[],
+): Array<{ parentId: string | null; frame: Frame; parts: string[] }> {
+  const clusters = new Map<string | null, { frame: Frame; parts: string[] }>();
+  for (const id of partIds) {
+    const node = assembly.parts[id];
+    if (!node) continue;
+    const key = node.parentId;
+    let cluster = clusters.get(key);
+    if (!cluster) {
+      cluster = { frame: parentWorldTransform(assembly, id), parts: [] };
+      clusters.set(key, cluster);
+    }
+    cluster.parts.push(id);
+  }
+  return [...clusters.entries()].map(([parentId, c]) => ({ parentId, ...c }));
 }
 
 // ---------------------------------------------------------------- gizmo
