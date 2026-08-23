@@ -16,10 +16,13 @@ export async function readSequenceFile(file: File): Promise<Sequence> {
 }
 
 /**
- * Export a plain work-instruction document. Intentionally HTML, not PDF —
+ * Build a plain work-instruction document. Intentionally HTML, not PDF —
  * the browser prints HTML to PDF perfectly and it keeps us dependency-free.
+ *
+ * Pure: returns a string and touches no DOM, so it is testable headlessly.
+ * `exportInstructionsHtml` is the thin browser wrapper around it.
  */
-export function exportInstructionsHtml(sequence: Sequence) {
+export function buildInstructionsHtml(sequence: Sequence): string {
   const timeline = buildTimeline(sequence);
   const rows = timeline
     .map(
@@ -43,7 +46,7 @@ export function exportInstructionsHtml(sequence: Sequence) {
     )
     .join('\n');
 
-  const html = `<!doctype html>
+  return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${escapeHtml(sequence.name)}</title>
 <style>
   body{font:14px/1.6 system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 20px;color:#111}
@@ -62,7 +65,10 @@ export function exportInstructionsHtml(sequence: Sequence) {
      <b>Source:</b> ${escapeHtml(sequence.assembly.sourceFile || sequence.assembly.name)}</p>
   ${rows}
 </body></html>`;
+}
 
+export function exportInstructionsHtml(sequence: Sequence) {
+  const html = buildInstructionsHtml(sequence);
   triggerDownload(new Blob([html], { type: 'text/html' }), `${slug(sequence.name)}-instructions.html`);
 }
 
@@ -99,7 +105,7 @@ function triggerDownload(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-const slug = (s: string) =>
+export const slug = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'sequence';
 
 const escapeHtml = (s: string) =>
