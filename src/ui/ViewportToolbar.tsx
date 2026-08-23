@@ -1,16 +1,14 @@
-/** Floating viewport toolbar: gizmo mode, snapping, and explode. */
+/** Floating viewport toolbar: picking, snapping, and explode. */
 import { useStore } from '@/state/store';
 
 export function ViewportToolbar() {
   const sequence = useStore((s) => s.sequence);
-  const gizmo = useStore((s) => s.gizmo);
   const snap = useStore((s) => s.snap);
   const axisLock = useStore((s) => s.axisLock);
   const pickEnabled = useStore((s) => s.pickEnabled);
   const selection = useStore((s) => s.selection);
   const activeOperationId = useStore((s) => s.activeOperationId);
 
-  const setGizmo = useStore((s) => s.setGizmo);
   const setSnap = useStore((s) => s.setSnap);
   const setAxisLock = useStore((s) => s.setAxisLock);
   const setPickEnabled = useStore((s) => s.setPickEnabled);
@@ -18,7 +16,9 @@ export function ViewportToolbar() {
 
   if (!sequence) return null;
 
-
+  // No mode buttons: the gizmo carries translate arrows and rotate rings at
+  // once, and orbiting works whenever the pointer is not on a handle. Modes
+  // existed only to switch TransformControls' single-personality widget.
   return (
     <div className="vp-toolbar">
       <div className="vp-group">
@@ -29,24 +29,6 @@ export function ViewportToolbar() {
         >
           ⬚ Pick
         </button>
-      </div>
-
-      <div className="vp-group">
-        {([
-          ['off', '✋', 'Look', 'Orbit only — no dragging'],
-          ['translate', '✥', 'Move', 'Drag the arrows to move parts'],
-          ['rotate', '⟳', 'Rotate', 'Drag the rings to rotate parts'],
-        ] as const).map(([m, glyph, label, tip]) => (
-          <button
-            key={m}
-            className={`vp-mode ${gizmo === m ? 'on' : ''}`}
-            onClick={() => setGizmo(m)}
-            title={`Gizmo: ${m} — ${tip}`}
-          >
-            <span className="vp-glyph">{glyph}</span>
-            <span className="vp-label">{label}</span>
-          </button>
-        ))}
       </div>
 
       <div className="vp-group">
@@ -80,13 +62,11 @@ export function ViewportToolbar() {
       </div>
 
       <div className="vp-hint">
-        {!activeOperationId
-          ? 'Add a step to start authoring'
-          : selection.length > 1
-            ? `${selection.length} parts — drag moves them as one rigid group`
-            : selection.length === 1
-              ? 'Drag the gizmo to author motion'
-              : 'Click a part · shift adds · alt picks exact mesh'}
+        {selection.length > 1
+          ? `${selection.length} parts — drag moves them as one rigid group`
+          : selection.length === 1
+            ? 'Arrows move · rings rotate'
+            : 'Click a part · shift adds · alt picks exact mesh'}
       </div>
     </div>
   );

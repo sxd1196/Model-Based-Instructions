@@ -8,10 +8,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   ancestorsOf,
+  applyDragPolicy,
   centroidOf,
   collectSubtree,
   constrainToDominantAxis,
   conjugate,
+  effectiveDragMove,
   isIdentityMove,
   moveFromDrag,
   radialExplode,
@@ -25,7 +27,7 @@ import {
 import { composePartTransform, quatFromAxisAngle } from './transform';
 import { buildAssemblyFromScene } from '@/cad/loadGltf';
 import { makeDemoAssembly } from '@/cad/demo';
-import { IDENTITY_QUAT, type Quat, type Vec3 } from './schema';
+import { IDENTITY_QUAT, type Move, type Quat, type Vec3 } from './schema';
 
 const { root, name } = makeDemoAssembly();
 const { assembly } = buildAssemblyFromScene(root, 'demo://x', { name });
@@ -232,7 +234,7 @@ describe('isIdentityMove', () => {
 });
 
 describe('resolveGizmoState', () => {
-  const base = { selectionCount: 1, mode: 'translate' as const, hasSequence: true };
+  const base = { selectionCount: 1 as const, hasSequence: true };
 
   it('REGRESSION: shows the gizmo with no step created yet', () => {
     // The original bug: the gizmo was gated on activeOperationId, so before
@@ -253,11 +255,9 @@ describe('resolveGizmoState', () => {
     expect(g.reason).toMatch(/select a part/i);
   });
 
-  it('hides with a reason when the mode is off', () => {
-    const g = resolveGizmoState({ ...base, mode: 'off' });
-    expect(g.visible).toBe(false);
-    expect(g.reason).toMatch(/off/i);
-  });
+  // DELETED: 'hides with a reason when the mode is off'. Gizmo modes no
+  // longer exist — the combined widget carries arrows and rings at once, so
+  // there is no 'off' state to test.
 
   it('hides with a reason when no model is loaded', () => {
     const g = resolveGizmoState({ ...base, hasSequence: false });
@@ -267,15 +267,68 @@ describe('resolveGizmoState', () => {
 
   it('never hides without saying why', () => {
     const cases = [
-      { selectionCount: 0, mode: 'translate' as const, hasSequence: true },
-      { selectionCount: 1, mode: 'off' as const, hasSequence: true },
-      { selectionCount: 1, mode: 'translate' as const, hasSequence: false },
+      { selectionCount: 0, hasSequence: true },
+      { selectionCount: 0, hasSequence: false },
+      { selectionCount: 1, hasSequence: false },
     ];
     for (const c of cases) {
       const g = resolveGizmoState(c);
       expect(g.visible).toBe(false);
       expect(g.reason).toBeTruthy();
     }
+  });
+});
+
+describe('applyDragPolicy / effectiveDragMove (preview == commit)', () => {
+  // The live drag preview and the committed move both go through these
+  // functions. If they ever disagree, the part jumps on release — the exact
+  // "doesn't follow the mouse" feel this design exists to kill.
+
+  it('pure translation gets snapped and axis-locked', () => {
+    const move: Move = {
+      translate: [98.7, 3.2, 1.1], rotate: IDENTITY_QUAT, pivot: [0, 0, 0],
+    };
+    const out = applyDragPolicy(move, { snap: 5, axisLock: true });
+    expect(out.translate).toEqual([100, 0, 0]);
+  });
+
+  it('a rotated move passes through COMPLETELY untouched', () => {
+    const spin = quatFromAxisAngle([0, 0, 1], Math.PI / 5);
+    const move: Move = { translate: [7.3, 2.1, 0.4], rotate: spin, pivot: [10, 20, 30] };
+    expect(applyDragPolicy(move, { snap: 25, axisLock: true })).toEqual(move);
+  });
+
+  it('policy off means identity', () => {
+    const move: Move = {
+      translate: [98.7, 3.2, 1.1], rotate: IDENTITY_QUAT, pivot: [0, 0, 0],
+    };
+    expect(applyDragPolicy(move, { snap: 0, axisLock: false })).toEqual(move);
+  });
+
+  it('effectiveDragMove pivots at rest, so in-place rotation has zero translate', () => {
+    const rest: Vec3 = [50, 25, 10];
+    const spin = quatFromAxisAngle([0, 1, 0], Math.PI / 3);
+    // A rotate-only gizmo drag leaves the handle at the part's position.
+    const move = effectiveDragMove(rest, IDENTITY_QUAT, rest, spin, {
+      snap: 5, axisLock: true,
+    });
+    expect(Math.hypot(...move.translate)).toBeLessThan(1e-9);
+    expect(move.pivot).toEqual(rest);
+  });
+
+  it('the preview move IS the committed move for the same handle pose', () => {
+    // Simulates one drag: what previewFromHandle computes mid-drag equals
+    // what commitDrag stores on release, because both call this function
+    // with identical inputs.
+    const rest: Vec3 = [10, 20, 30];
+    const dragged: Vec3 = [10, 20, 152.3];
+    const policy = { snap: 5, axisLock: true };
+
+    const preview = effectiveDragMove(rest, IDENTITY_QUAT, dragged, IDENTITY_QUAT, policy);
+    const committed = effectiveDragMove(rest, IDENTITY_QUAT, dragged, IDENTITY_QUAT, policy);
+    expect(committed).toEqual(preview);
+    // And the shaped result is the snapped axial pull the user watched.
+    expect(preview.translate).toEqual([0, 0, 120]);
   });
 });
 

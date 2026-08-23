@@ -6,11 +6,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { TransformControls } from '@react-three/drei';
+import { PivotControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '@/state/store';
 import { indexScene } from '@/cad/loadGltf';
-import { resolveGizmoState } from '@/domain/authoring';
+import { applyDragPolicy, effectiveDragMove, resolveGizmoState, selectableParts } from '@/domain/authoring';
+import { groupMoveFromDrag } from '@/domain/rigid';
+import { beginPreview, endPreview, updatePreview } from './dragPreview';
 import { distance, liftOffSurface, snapToFeature } from '@/domain/snapping';
 import type { Assembly, Vec3 } from '@/domain/schema';
 
@@ -151,32 +153,49 @@ function snapHitToFeature(hit: THREE.Intersection): {
 }
 
 /**
- * Drag gizmo attached to the current selection.
+ * Combined drag gizmo attached to the current selection.
  *
- * Uses a proxy Object3D rather than attaching directly to the mesh: the
- * SceneBinder rewrites every part's transform each frame from the evaluated
- * timeline, so a gizmo attached to real geometry would fight it. The proxy is
- * free to move, and we commit its pose on mouseUp.
+ * PivotControls rather than TransformControls: it carries translate arrows
+ * AND rotate rings in one widget, so there is no mode state and no toolbar
+ * buttons to switch personalities. Orbit works whenever the pointer is not
+ * on a handle.
+ *
+ * The widget is driven through an external matrix (autoTransform off). While
+ * idle the matrix is re-parked on the target every frame — SceneBinder
+ * rewrites part transforms per frame, so anything positioned once goes stale
+ * the moment a commit, scrub, or undo moves the part (the stranded-gizmo
+ * bug). While dragging, the drag's provisional Move is fed to SceneBinder via
+ * dragPreview, so the ACTUAL GEOMETRY follows the mouse in real time; release
+ * commits the identical Move through the store.
  *
  * Single and multi-part selections take different paths:
- *  - one part  -> commitDrag, inverting the pose directly
- *  - many parts -> commitGroupDrag, composing a RIGID transform from the
- *    gizmo's start/end so the group keeps its internal geometry
+ *  - one part  -> commitDrag, inverting the pose composition vs rest
+ *  - many parts -> commitGroupDrag, composing a RIGID transform so the group
+ *    keeps its internal geometry
  */
 // Module-level scratch: useFrame must not allocate (AGENTS.md §7).
 const _acc = new THREE.Vector3();
 const _scratch = new THREE.Vector3();
+const _mpos = new THREE.Vector3();
+const _mquat = new THREE.Quaternion();
+const _mscale = new THREE.Vector3();
+const _arrow = new THREE.Vector3();
+const IDENT_Q = new THREE.Quaternion();
+const ONE = new THREE.Vector3(1, 1, 1);
 
 export function DragGizmo({ scene, assembly }: Props) {
+  const { camera, gl } = useThree();
   const selection = useStore((s) => s.selection);
-  const gizmo = useStore((s) => s.gizmo);
   const commitDrag = useStore((s) => s.commitDrag);
   const commitGroupDrag = useStore((s) => s.commitGroupDrag);
   const pause = useStore((s) => s.pause);
 
-  const proxy = useRef<THREE.Object3D>(new THREE.Object3D());
-  const dragStart = useRef<THREE.Vector3>(new THREE.Vector3());
+  const matrix = useRef(new THREE.Matrix4());
   const dragging = useRef(false);
+  const dragStart = useRef(new THREE.Vector3());
+  const startQuat = useRef(new THREE.Quaternion());
+  const lastPos = useRef(new THREE.Vector3());
+  const lastQuat = useRef(new THREE.Quaternion());
 
   const index = useMemo(
     () => (scene && assembly ? indexScene(scene, assembly) : new Map()),
@@ -187,73 +206,143 @@ export function DragGizmo({ scene, assembly }: Props) {
   const targetId = selection.length === 1 ? selection[0] : null;
   const target = targetId ? index.get(targetId) : null;
 
-  /**
-   * Keep the gizmo handle welded to what it controls.
-   *
-   * This runs every frame rather than on selection change alone. SceneBinder
-   * rewrites part transforms on every frame from the evaluator, so ANY change
-   * to the resolved pose — committing a drag, scrubbing, undo, playback —
-   * moves the part out from under a handle that was positioned once. That is
-   * how the gizmo ends up stranded in empty space while the part sits
-   * elsewhere.
-   *
-   * Skipped while dragging: TransformControls owns the proxy then, and
-   * writing to it mid-drag fights the user's mouse.
-   */
+  /** Park the widget on its target while idle; never fight an active drag. */
   useFrame(() => {
     if (import.meta.env.DEV && typeof window !== 'undefined') {
-      // Dev-only probe so headless checks can measure handle-vs-part drift.
+      matrix.current.decompose(_mpos, _mquat, _mscale);
+      // Screen-space projection so headless checks can aim a REAL mouse
+      // press at a specific handle instead of guessing pixels.
+      _scratch.copy(_mpos).project(camera);
+      const rect = gl.domElement.getBoundingClientRect();
+      _arrow.set(_mpos.x + widgetScale * 0.9, _mpos.y, _mpos.z).project(camera);
       (window as unknown as { __gizmoProbe?: unknown }).__gizmoProbe = {
-        handle: proxy.current.position.toArray(),
+        handle: _mpos.toArray(),
+        screen: [
+          rect.left + ((_scratch.x + 1) / 2) * rect.width,
+          rect.top + ((1 - _scratch.y) / 2) * rect.height,
+        ],
+        arrowX: [
+          rect.left + ((_arrow.x + 1) / 2) * rect.width,
+          rect.top + ((1 - _arrow.y) / 2) * rect.height,
+        ],
         target: target ? target.getWorldPosition(_scratch).toArray() : null,
+        dragging: dragging.current,
       };
     }
     if (dragging.current) return;
-    const p = proxy.current;
 
     if (target) {
-      target.getWorldPosition(p.position);
-      target.getWorldQuaternion(p.quaternion);
+      target.getWorldPosition(_acc);
+    } else if (isGroup) {
+      // Group handle sits at the selection centroid, so a drag feels like
+      // grabbing the whole thing rather than one arbitrary member.
+      _acc.set(0, 0, 0);
+      let n = 0;
+      for (const id of selection) {
+        const obj = index.get(id);
+        if (!obj) continue;
+        obj.getWorldPosition(_scratch);
+        _acc.add(_scratch);
+        n++;
+      }
+      if (n === 0) return;
+      _acc.divideScalar(n);
+    } else {
       return;
     }
 
-    if (!isGroup) return;
-
-    // Group handle sits at the selection centroid, so a drag feels like
-    // grabbing the whole thing rather than one arbitrary member.
-    _acc.set(0, 0, 0);
-    let n = 0;
-    for (const id of selection) {
-      const obj = index.get(id);
-      if (!obj) continue;
-      obj.getWorldPosition(_scratch);
-      _acc.add(_scratch);
-      n++;
-    }
-    if (n > 0) p.position.copy(_acc.divideScalar(n));
+    // Identity rotation: handle axes stay world-aligned, matching how the
+    // authored Moves and axis lock are expressed.
+    matrix.current.compose(_acc, IDENT_Q, ONE);
   });
 
-  // Reset the handle's orientation when the selection changes; a group drag
-  // composes from an identity handle.
-  useEffect(() => {
-    proxy.current.quaternion.set(0, 0, 0, 1);
-  }, [targetId, isGroup]);
-
-  const onMouseDown = useCallback(() => {
-    pause();
-    dragging.current = true;
-    dragStart.current.copy(proxy.current.position);
-  }, [pause]);
-
-  const onMouseUp = useCallback(() => {
-    dragging.current = false;
-    const p = proxy.current;
-    const rotation: [number, number, number, number] = [
-      p.quaternion.x, p.quaternion.y, p.quaternion.z, p.quaternion.w,
-    ];
+  /** Recompute the provisional Move for the current handle pose. */
+  const previewFromHandle = useCallback(() => {
+    const st = useStore.getState();
+    if (!st.sequence) return null;
 
     if (targetId) {
-      commitDrag(targetId, [p.position.x, p.position.y, p.position.z], rotation);
+      const node = st.sequence.assembly.parts[targetId];
+      if (!node) return null;
+      // Dragged world rotation = drag delta on top of where the part started.
+      _mquat.copy(lastQuat.current).multiply(startQuat.current);
+      return effectiveDragMove(
+        node.restTranslate,
+        node.restRotate,
+        [lastPos.current.x, lastPos.current.y, lastPos.current.z],
+        [_mquat.x, _mquat.y, _mquat.z, _mquat.w],
+        { snap: st.snap, axisLock: st.axisLock },
+      );
+    }
+
+    // Group: compose the drag delta with whatever the group's track already
+    // holds — the same prior commitGroupDrag will use.
+    const parts = selectableParts(st.sequence.assembly, selection);
+    const op = st.sequence.operations.find((o) => o.id === st.activeOperationId);
+    const existing = op?.tracks.find(
+      (t) => t.parts.length === parts.length && t.parts.every((p) => parts.includes(p)),
+    );
+    const s = dragStart.current;
+    const raw = groupMoveFromDrag(
+      existing?.to ?? null,
+      [s.x, s.y, s.z],
+      [lastPos.current.x, lastPos.current.y, lastPos.current.z],
+      [lastQuat.current.x, lastQuat.current.y, lastQuat.current.z, lastQuat.current.w],
+    );
+    return applyDragPolicy(raw, { snap: st.snap, axisLock: st.axisLock });
+  }, [targetId, selection]);
+
+  const onDragStart = useCallback(() => {
+    pause();
+    dragging.current = true;
+
+    matrix.current.decompose(_mpos, _mquat, _mscale);
+    dragStart.current.copy(_mpos);
+    lastPos.current.copy(_mpos);
+    lastQuat.current.identity();
+
+    if (target) target.getWorldQuaternion(startQuat.current);
+    else startQuat.current.identity();
+
+    const st = useStore.getState();
+    const parts = targetId
+      ? [targetId]
+      : st.sequence
+        ? selectableParts(st.sequence.assembly, selection)
+        : [];
+    beginPreview(parts);
+  }, [pause, target, targetId, selection]);
+
+  const onDrag = useCallback(
+    (l: THREE.Matrix4) => {
+      matrix.current.copy(l);
+      l.decompose(_mpos, _mquat, _mscale);
+      lastPos.current.copy(_mpos);
+      lastQuat.current.copy(_mquat);
+
+      // Live preview: SceneBinder renders this Move for the dragged parts
+      // this frame, so the geometry — not just the handle — follows the
+      // mouse. Snap and axis lock shape it here too, so what you see
+      // stepping IS what will be committed.
+      const move = previewFromHandle();
+      if (move) updatePreview(move);
+    },
+    [previewFromHandle],
+  );
+
+  const onDragEnd = useCallback(() => {
+    dragging.current = false;
+    endPreview();
+
+    // Commit through the store — the SAME shared functions shape the final
+    // Move, so it lands exactly where the preview left it.
+    _mquat.copy(lastQuat.current).multiply(startQuat.current);
+    if (targetId) {
+      commitDrag(
+        targetId,
+        [lastPos.current.x, lastPos.current.y, lastPos.current.z],
+        [_mquat.x, _mquat.y, _mquat.z, _mquat.w],
+      );
       return;
     }
 
@@ -262,32 +351,51 @@ export function DragGizmo({ scene, assembly }: Props) {
       commitGroupDrag(
         selection,
         [s.x, s.y, s.z],
-        [p.position.x, p.position.y, p.position.z],
-        rotation,
+        [lastPos.current.x, lastPos.current.y, lastPos.current.z],
+        [lastQuat.current.x, lastQuat.current.y, lastQuat.current.z, lastQuat.current.w],
       );
-      // Reset orientation so the next drag composes from a clean handle.
-      p.quaternion.set(0, 0, 0, 1);
     }
   }, [targetId, selection, commitDrag, commitGroupDrag]);
+
+  // Widget size: fraction of the selection's own footprint so it reads as
+  // attached to the part on a bolt and on a housing alike.
+  const widgetScale = useMemo(() => {
+    const box = new THREE.Box3();
+    const tmp = new THREE.Box3();
+    for (const id of targetId ? [targetId] : selection) {
+      const obj = index.get(id);
+      if (!obj) continue;
+      tmp.setFromObject(obj);
+      box.union(tmp);
+    }
+    if (box.isEmpty()) return 60;
+    const d = box.getSize(new THREE.Vector3()).length();
+    return Math.max(d * 0.75, 30);
+  }, [targetId, selection, index]);
 
   const hasTarget = !!target || isGroup;
   const gizmoState = resolveGizmoState({
     selectionCount: selection.length,
-    mode: gizmo,
     hasSequence: !!assembly,
   });
   if (!gizmoState.visible || !hasTarget) return null;
 
   return (
-    <>
-      <primitive object={proxy.current} />
-      <TransformControls
-        object={proxy.current}
-        mode={gizmo === 'rotate' ? 'rotate' : 'translate'}
-        onMouseDown={onMouseDown}
-        onMouseUp={onMouseUp}
-        size={isGroup ? 1 : 0.8}
-      />
-    </>
+    <PivotControls
+      matrix={matrix.current}
+      autoTransform={false}
+      onDragStart={onDragStart}
+      onDrag={onDrag}
+      onDragEnd={onDragEnd}
+      scale={widgetScale}
+      lineWidth={3}
+      // Arrows + rings only. The corner plane sliders are one prop away
+      // (remove this) but crowd the widget on small parts.
+      disableSliders
+      // Scaling a CAD part is meaningless and corrupts the rigid model.
+      disableScaling
+      depthTest={false}
+      annotations
+    />
   );
 }

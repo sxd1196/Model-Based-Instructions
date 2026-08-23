@@ -24,7 +24,7 @@ beforeEach(() => {
     sequence: null, selection: [], activeOperationId: null,
     time: 0, playing: false, playbackRate: 1, loading: false,
     warnings: [], past: [], future: [],
-    gizmo: 'translate', snap: 0, axisLock: false, pickEnabled: true,
+    snap: 0, axisLock: false, pickEnabled: true,
   });
   s().newFromAssembly(assembly);
 });

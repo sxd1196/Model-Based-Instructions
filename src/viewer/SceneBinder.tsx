@@ -12,6 +12,7 @@ import { useStore } from '@/state/store';
 import { resolveFrame } from '@/domain/evaluate';
 import type { ResolvedFrame, StyleMode } from '@/domain/evaluate';
 import { indexScene } from '@/cad/loadGltf';
+import { dragPreview } from './dragPreview';
 import type { Assembly } from '@/domain/schema';
 
 const _pos = new THREE.Vector3();
@@ -86,11 +87,17 @@ function applyPoses(
   index: Map<string, THREE.Object3D>,
   rest: Map<string, { p: THREE.Vector3; q: THREE.Quaternion }>,
 ) {
+  // During a gizmo drag the provisional Move for the dragged parts overrides
+  // the evaluated frame, so the GEOMETRY follows the mouse in real time
+  // rather than jumping on release. Same Move shape, same composition below.
+  const preview = dragPreview.active && dragPreview.move ? dragPreview : null;
+
   for (const [id, obj] of index) {
     const base = rest.get(id);
     if (!base) continue;
 
-    const move = frame.poses.get(id);
+    const move =
+      preview && preview.parts.has(id) ? preview.move! : frame.poses.get(id);
 
     if (!move) {
       // Untouched: sit at rest. Cheap early-out for the common case.

@@ -161,6 +161,57 @@ export function isIdentityMove(move: Move, epsilon = 1e-6): boolean {
   return noTranslate && noRotate;
 }
 
+// ---------------------------------------------------------------- drag policy
+
+export interface DragPolicy {
+  /** Grid step in mm; 0 disables. */
+  snap: number;
+  /** Collapse near-axial translations onto their dominant axis. */
+  axisLock: boolean;
+}
+
+/**
+ * Post-process a raw drag Move with snap and axis lock.
+ *
+ * Skipped entirely when the drag carries rotation: snap and axis lock are
+ * translation aids, and quantizing the translate of a rotated transform
+ * corrupts the result (the original rotate-fling bug).
+ *
+ * SINGLE SOURCE OF TRUTH for drag shaping — the live preview during a drag
+ * and the committed move on release both call this, which is what guarantees
+ * the part lands exactly where the preview showed it.
+ */
+export function applyDragPolicy(move: Move, policy: DragPolicy): Move {
+  const rotated = Math.abs(Math.abs(move.rotate[3]) - 1) > 1e-6;
+  if (rotated) return move;
+
+  let out = move;
+  if (policy.axisLock) {
+    out = { ...out, translate: constrainToDominantAxis(out.translate) };
+  }
+  if (policy.snap > 0) {
+    out = { ...out, translate: snapTranslate(out.translate, policy.snap) };
+  }
+  return out;
+}
+
+/**
+ * The complete authored Move for a SINGLE part drag: inverse of the pose
+ * composition, pivoted at the part's rest position, shaped by policy.
+ */
+export function effectiveDragMove(
+  restTranslate: Vec3,
+  restRotate: Quat,
+  draggedPosition: Vec3,
+  draggedRotation: Quat,
+  policy: DragPolicy,
+): Move {
+  return applyDragPolicy(
+    moveFromDrag(restTranslate, restRotate, draggedPosition, draggedRotation, restTranslate),
+    policy,
+  );
+}
+
 // ---------------------------------------------------------------- gizmo
 
 export interface GizmoState {
@@ -178,23 +229,20 @@ export interface GizmoState {
  * required an active operation: with no step created yet the gizmo rendered
  * nothing and gave no explanation, which reads as "the app is broken".
  *
- * The rule now: the gizmo appears whenever something is selected and the mode
- * is not 'off'. Committing a drag with no step creates one (see commitDrag),
- * so there is no reason to hide the control.
+ * The rule now: the gizmo appears whenever something is selected. There are
+ * no modes — the combined widget carries translate arrows and rotate rings
+ * at once, so mode state (and the buttons to switch it) no longer exist.
+ * Committing a drag with no step creates one (see commitDrag).
  */
 export function resolveGizmoState(args: {
   selectionCount: number;
-  mode: 'off' | 'translate' | 'rotate';
   hasSequence: boolean;
 }): GizmoState {
-  const { selectionCount, mode, hasSequence } = args;
+  const { selectionCount, hasSequence } = args;
   const isGroup = selectionCount > 1;
 
   if (!hasSequence) {
     return { visible: false, reason: 'Load a model first', isGroup };
-  }
-  if (mode === 'off') {
-    return { visible: false, reason: 'Gizmo is off — pick translate or rotate', isGroup };
   }
   if (selectionCount === 0) {
     return { visible: false, reason: 'Select a part to move it', isGroup };

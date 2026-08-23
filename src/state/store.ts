@@ -30,13 +30,12 @@ import {
 import { totalDuration } from '@/domain/evaluate';
 import {
   centroidOf,
-  constrainToDominantAxis,
   isIdentityMove,
   moveFromDrag,
+  applyDragPolicy,
   radialExplode,
   resolveSelectionTarget,
   selectableParts,
-  snapTranslate,
 } from '@/domain/authoring';
 import { groupMoveFromDrag } from '@/domain/rigid';
 
@@ -75,7 +74,6 @@ interface State {
   past: HistoryEntry[];
   future: HistoryEntry[];
   /** Direct-manipulation gizmo mode. 'off' hides it. */
-  gizmo: 'off' | 'translate' | 'rotate';
   /** Grid snap in mm for gizmo drags. 0 disables. */
   snap: number;
   /** Collapse a near-axial drag onto its dominant axis. */
@@ -100,7 +98,6 @@ interface Actions {
   clearSelection: () => void;
   /** Resolve a raw picked mesh id to a sensible selection unit, then select. */
   pickPart: (clickedId: string, opts?: { additive?: boolean; deep?: boolean }) => void;
-  setGizmo: (mode: 'off' | 'translate' | 'rotate') => void;
   setSnap: (mm: number) => void;
   setAxisLock: (v: boolean) => void;
   setPickEnabled: (v: boolean) => void;
@@ -197,7 +194,6 @@ export const useStore = create<State & Actions>()(
       warnings: [],
       past: [],
       future: [],
-      gizmo: 'translate',
       snap: 5,
       axisLock: true,
       pickEnabled: true,
@@ -256,7 +252,6 @@ export const useStore = create<State & Actions>()(
             : ids;
         }),
 
-      setGizmo: (mode) => set((s) => void (s.gizmo = mode)),
       setSnap: (mm) => set((s) => void (s.snap = Math.max(0, mm))),
       setAxisLock: (v) => set((s) => void (s.axisLock = v)),
       setPickEnabled: (v) => set((s) => void (s.pickEnabled = v)),
@@ -281,17 +276,9 @@ export const useStore = create<State & Actions>()(
           node.restTranslate,
         );
 
-        // Snap and axis lock are translation aids; applying them to a rotated
-        // transform corrupts the result. Skip them when a rotation is present.
-        const rotated = Math.abs(Math.abs(move.rotate[3]) - 1) > 1e-6;
-        if (!rotated) {
-          if (state.axisLock) {
-            move = { ...move, translate: constrainToDominantAxis(move.translate) };
-          }
-          if (state.snap > 0) {
-            move = { ...move, translate: snapTranslate(move.translate, state.snap) };
-          }
-        }
+        // Shared with the live preview (applyDragPolicy is the single source
+        // of truth), so the part lands exactly where the preview showed it.
+        move = applyDragPolicy(move, { snap: state.snap, axisLock: state.axisLock });
 
         // A drag that ends where it started should not create a dead track —
         // nor an empty step. Bail BEFORE auto-creating an operation.
@@ -367,17 +354,8 @@ export const useStore = create<State & Actions>()(
           gizmoRotation,
         );
 
-        // Snap and axis lock only make sense for pure translations; applying
-        // them to a rotated group would break rigidity.
-        const rotated = Math.abs(Math.abs(move.rotate[3]) - 1) > 1e-6;
-        if (!rotated) {
-          if (state.axisLock) {
-            move = { ...move, translate: constrainToDominantAxis(move.translate) };
-          }
-          if (state.snap > 0) {
-            move = { ...move, translate: snapTranslate(move.translate, state.snap) };
-          }
-        }
+        // Same shared policy as the live preview — see applyDragPolicy.
+        move = applyDragPolicy(move, { snap: state.snap, axisLock: state.axisLock });
 
         if (isIdentityMove(move) && !existing) return;
 

@@ -109,11 +109,11 @@ check('translate: THE PART VISIBLY MOVED without pressing play',
   moved > 8, `${moved} grid cells changed`);
 
 // ---------------------------------------------------------------- BUG 2
-// Title now carries a description, so match on the prefix.
-await page.locator('button[title^="Gizmo: rotate"]').click();
-await page.waitForTimeout(400);
-const mode = await page.evaluate(() => window.__store.getState().gizmo);
-check('rotate: toolbar switches the gizmo to rotate', mode === 'rotate', mode);
+// No mode buttons anymore: the combined widget carries arrows AND rings.
+// Verify the mode state is gone and rotation still commits correctly.
+const modeButtons = await page.locator('button[title^="Gizmo:"]').count();
+check('mode buttons are gone (combined gizmo)', modeButtons === 0,
+  `${modeButtons} mode button(s) found`);
 
 const beforeRot = await canvasSignature();
 
@@ -193,6 +193,100 @@ check('gizmo probe is reachable', gapBefore !== null && gapAfter !== null,
 check('GIZMO HANDLE STAYS ON THE PART after a commit',
   gapAfter !== null && gapAfter < 5,
   `gap ${gapBefore?.toFixed(2)}mm -> ${gapAfter?.toFixed(2)}mm`);
+
+// ---------------------------------------------------------------- LIVE PREVIEW
+// A REAL mouse drag on the widget: geometry must move WHILE the button is
+// still down, not on release. This drives PivotControls' own hit-testing, so
+// it also proves the combined widget's handles are actually grabbable.
+await page.reload({ waitUntil: 'networkidle' });
+await page.getByRole('button', { name: 'Demo model', exact: true }).click();
+await page.waitForTimeout(2500);
+
+await page.evaluate(() => {
+  const st = window.__store.getState();
+  const p = Object.values(st.sequence.assembly.parts).find((x) => x.name === 'Cover_Plate');
+  st.pickPart(p.id, {});
+});
+await page.waitForTimeout(800);
+
+// Project the handle centre to screen coordinates via the probe.
+const handleScreen = await page.evaluate(() => {
+  const probe = window.__gizmoProbe;
+  if (!probe?.handle) return null;
+  return probe.handle; // world position; projected below with the camera
+});
+
+if (!handleScreen) {
+  check('live preview: handle reachable', false, 'no probe');
+} else {
+  // Find the canvas centre of the handle: ask the page to project it.
+  const px = await page.evaluate(() => {
+    const probe = window.__gizmoProbe;
+    // Aim at the X arrow's actual projected position, not a pixel guess.
+    return { x: probe.arrowX[0], y: probe.arrowX[1] };
+  });
+
+  const sigIdle = await canvasSignature();
+
+  // Press on the handle centre and pull right along the screen X axis —
+  // crossing the red arrow's hit zone regardless of exact projection.
+  await page.mouse.move(px.x, px.y);
+  await page.mouse.down();
+  await page.mouse.move(px.x + 120, px.y, { steps: 20 });
+  // STILL HELD DOWN: this is the moment the old design showed nothing.
+  await page.waitForTimeout(300);
+  const sigMidDrag = await canvasSignature();
+  const dragging = await page.evaluate(() => window.__gizmoProbe?.dragging ?? false);
+  await page.screenshot({ path: '.smoke/fix-05-mid-drag.png' });
+  await page.mouse.up();
+  await page.waitForTimeout(600);
+
+  const midDelta = differing(sigIdle, sigMidDrag);
+  if (dragging) {
+    check('live preview: GEOMETRY MOVES MID-DRAG (button still down)',
+      midDelta > 6, `${midDelta} grid cells changed while held`);
+  } else {
+    // The blind press missed the handle — report it honestly rather than
+    // passing on a drag that never started.
+    check('live preview: mid-drag check attempted', false,
+      'mouse press did not land on a gizmo handle; needs manual confirmation');
+  }
+}
+
+// ---------------------------------------------------------------- ORANGE BOX
+// Reported: the selection outline stayed at the part's OLD position after a
+// commit. BoxHelper computes its box once; it must now be update()d per frame.
+const outlineInfo = await page.evaluate(() => {
+  const st = window.__store.getState();
+  const p = Object.values(st.sequence.assembly.parts).find((x) => x.name === 'Main_Shaft');
+  st.pickPart(p.id, {});
+  return p.restTranslate;
+});
+await page.waitForTimeout(600);
+
+await page.evaluate(() => {
+  const st = window.__store.getState();
+  const p = Object.values(st.sequence.assembly.parts).find((x) => x.name === 'Main_Shaft');
+  const r = p.restTranslate;
+  st.commitDrag(p.id, [r[0], r[1], r[2] + 150], p.restRotate);
+});
+await page.waitForTimeout(900);
+await page.screenshot({ path: '.smoke/fix-06-outline-tracks.png' });
+
+// The helper's box centre must sit near the part's NEW world position.
+const outlineGap = await page.evaluate((rest) => {
+  const centres = window.__outlineProbe;
+  if (!centres?.length) return null;
+  const expectedZ = rest[2] + 150;
+  return Math.abs(centres[0][2] - expectedZ);
+}, outlineInfo);
+
+if (outlineGap === null) {
+  check('orange box: helper reachable', false, 'no outline probe');
+} else {
+  check('ORANGE BOX FOLLOWS THE PART after a commit', outlineGap < 10,
+    'box centre is ' + outlineGap.toFixed(1) + 'mm from the moved part on Z');
+}
 
 await browser.close();
 

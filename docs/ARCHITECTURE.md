@@ -213,6 +213,36 @@ perfectly, and this avoids a heavyweight PDF dependency for zero real benefit.
 Video capture uses the browser's built-in `MediaRecorder` on the canvas stream. No
 ffmpeg, no server, no dependency. Output is WebM.
 
+## Direct manipulation (2026-08-23: combined gizmo + live preview)
+
+The drag widget is drei's `PivotControls` — translate arrows and rotate rings
+in ONE widget, no mode state. ~~The original `TransformControls` needed a
+LOOK/MOVE/ROTATE toolbar because it renders one personality at a time.~~
+Replaced: the mode buttons were the app's biggest discoverability failure
+(a user could not find rotation at all).
+
+Three rules keep every part-tracking visual honest, each learned from a
+shipped bug:
+
+1. **Anything that follows a part must re-sync EVERY FRAME.** SceneBinder
+   rewrites part transforms per frame, so a gizmo handle, selection outline
+   (`BoxHelper.update()`), or callout positioned once at selection time is
+   stranded by the next commit, scrub, or undo. Three separate bugs shipped
+   from this one mistake before the rule was written down.
+
+2. **Drags preview live through `viewer/dragPreview.ts`.** During a drag the
+   provisional Move overrides the evaluated frame for the dragged parts inside
+   SceneBinder's `applyPoses`, so the geometry follows the mouse in real time.
+   It is a mutable module singleton, NOT React state (per-frame setState is
+   banned, AGENTS.md §7) and NOT the store (a drag would flood undo). On
+   release the same Move commits through the store normally.
+
+3. **Preview and commit share one code path** — `applyDragPolicy` /
+   `effectiveDragMove` in `domain/authoring.ts`. Snap and axis lock shape the
+   preview identically to the commit, so the part lands exactly where the
+   user watched it go. If these diverge the part jumps on release; a
+   regression test pins them equal.
+
 ## Known limitations
 
 - **Selection highlight uses `BoxHelper`**, not a true outline pass. Cheap and
