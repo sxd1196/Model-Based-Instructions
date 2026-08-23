@@ -16,5 +16,8 @@ export default defineConfig({
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
   // occt-import-js ships a wasm blob; keep it out of the dep optimizer.
-  optimizeDeps: { exclude: ['occt-import-js'] },
+  // occt-import-js is UMD and loads its own .wasm at runtime; let esbuild
+  // pre-bundle it so the interop shape is stable, but keep the wasm external.
+  optimizeDeps: { include: ['occt-import-js'] },
+  assetsInclude: ['**/*.wasm'],
 });

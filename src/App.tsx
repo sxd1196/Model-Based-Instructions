@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useStore } from '@/state/store';
 import { buildAssemblyFromScene } from '@/cad/loadGltf';
+import { describeFile, importCadFile } from '@/cad/importCad';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { Viewport } from '@/viewer/Viewport';
 import { AssemblyTree } from '@/ui/AssemblyTree';
@@ -53,12 +54,36 @@ export default function App() {
 
   const openModel = useCallback(
     async (file: File) => {
+      const info = describeFile(file.name);
+
+      if (!info.supported) {
+        setWarnings([`CRITICAL: ${info.message}`]);
+        return;
+      }
+
       setLoading(true);
       try {
-        const url = URL.createObjectURL(file);
-        const loader = new GLTFLoader();
-        const gltf = await loader.loadAsync(url);
-        ingest(gltf.scene, url, file.name.replace(/\.(glb|gltf)$/i, ''), file.name);
+        if (info.format === 'gltf') {
+          const url = URL.createObjectURL(file);
+          const loader = new GLTFLoader();
+          const gltf = await loader.loadAsync(url);
+          ingest(gltf.scene, url, file.name.replace(/\.(glb|gltf)$/i, ''), file.name);
+        } else {
+          // STEP/IGES/BREP go through OpenCascade WASM. Loaded lazily, so the
+          // first import pays an ~8MB download the glTF path never does.
+          setWarnings(['Reading CAD file with OpenCascade… first import loads the parser.']);
+          const buffer = await file.arrayBuffer();
+          const result = await importCadFile(buffer, file.name);
+          ingest(
+            result.scene,
+            `mem://${file.name}`,
+            file.name.replace(/\.(step|stp|iges|igs|brep)$/i, ''),
+            file.name,
+          );
+          if (result.warnings.length) {
+            setWarnings((prev) => [...result.warnings, ...prev.slice(0, 2)]);
+          }
+        }
       } catch (err) {
         setWarnings([`Failed to load model: ${(err as Error).message}`]);
       } finally {
@@ -100,6 +125,37 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [togglePlay, undo, redo]);
 
+  const [dragOver, setDragOver] = useState(false);
+
+  // Drag-and-drop straight onto the window: the fastest path from a CAD
+  // export to something on screen.
+  useEffect(() => {
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      setDragOver(true);
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (e.relatedTarget === null) setDragOver(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      if (file.name.toLowerCase().endsWith('.json')) openProject(file);
+      else openModel(file);
+    };
+
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, [openModel, openProject]);
+
   const toggleRecord = () => {
     if (recording) {
       stopRecording.current?.();
@@ -114,7 +170,7 @@ export default function App() {
   };
 
   return (
-    <div className="app">
+    <div className={`app${dragOver ? ' drag-over' : ''}`}>
       <header className="topbar">
         <div className="brand">Assembly Studio</div>
 
@@ -122,7 +178,7 @@ export default function App() {
           Open model
           <input
             type="file"
-            accept=".glb,.gltf"
+            accept=".glb,.gltf,.step,.stp,.iges,.igs,.brep"
             hidden
             onChange={(e) => e.target.files?.[0] && openModel(e.target.files[0])}
           />
@@ -164,6 +220,10 @@ export default function App() {
         </div>
       )}
 
+      {dragOver && (
+        <div className="drop-hint">Drop a .step, .glb, or project .json to open</div>
+      )}
+
       <div className="body">
         <aside className="left"><AssemblyTree /></aside>
         <main className="center">
@@ -173,7 +233,7 @@ export default function App() {
               <h2>Assembly Studio</h2>
               <p>Open a <b>.glb</b> / <b>.gltf</b> assembly, or try the demo model.</p>
               <p className="small">
-                Convert STEP → glTF with FreeCAD or CAD Assistant.<br />
+                Drop a <b>.step</b> file straight in — no conversion needed.<br />
                 Export each solid as a <b>separate named object</b> — do not merge.
               </p>
               <button className="btn big" onClick={openDemo}>Load demo model</button>

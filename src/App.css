@@ -231,6 +231,19 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .vp-group select { padding: 2px 4px; font-size: 11px; }
 .vp-hint { font-size: 11px; color: var(--muted); padding-left: 10px; border-left: 1px solid var(--line); }
 
+/* ---------- drag and drop ---------- */
+.app.drag-over::after {
+  content: ''; position: fixed; inset: 0; z-index: 900;
+  border: 3px dashed var(--accent); background: rgba(255, 160, 0, .06);
+  pointer-events: none;
+}
+.drop-hint {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 901; background: var(--panel); border: 1px solid var(--accent);
+  border-radius: 8px; padding: 14px 22px; font-size: 14px;
+  pointer-events: none; box-shadow: 0 8px 40px rgba(0, 0, 0, .5);
+}
+
 /* ---------- axis legend ---------- */
 .axis-legend {
   position: absolute; left: 16px; bottom: 122px; z-index: 10;

@@ -9,7 +9,7 @@
  * Runs its own isolated Chromium; it never touches the user's browser.
  */
 import { chromium } from 'playwright';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -191,6 +191,24 @@ try {
     await shot('07-callout');
   } else {
     record('callout controls reachable', false, 'no + add button found');
+  }
+
+  // ---------------------------------------------------------------- step
+  // Import a real STEP file through the UI, exercising the OpenCascade WASM
+  // path end to end (not just the unit-tested module).
+  const stepPath = join(process.cwd(), 'src/cad/fixtures/two_boxes.step');
+  if (existsSync(stepPath)) {
+    // The input is `hidden` behind a label, so no filechooser event fires —
+    // set the files on the input directly.
+    await page.locator('input[type="file"]').first().setInputFiles(stepPath);
+    await page.waitForTimeout(8000);
+
+    const stepRows = await page.locator('.tree-row').count();
+    const stepNames = await page.locator('.tree-name').allTextContents();
+    record('STEP file imports via the UI', stepRows > 0, `${stepRows} rows`);
+    record('STEP solids keep their names', stepNames.some((n) => /Block/i.test(n)),
+      stepNames.slice(0, 4).join(', '));
+    await shot('08-step-import');
   }
 
   // ---------------------------------------------------------------- errors

@@ -93,7 +93,7 @@ interface Actions {
   loadSequence: (s: Sequence) => void;
   loadFromJson: (raw: unknown) => void;
   newFromAssembly: (a: Assembly, warnings?: string[]) => void;
-  setWarnings: (w: string[]) => void;
+  setWarnings: (w: string[] | ((prev: string[]) => string[])) => void;
   setLoading: (v: boolean) => void;
 
   select: (ids: string[], additive?: boolean) => void;
@@ -226,7 +226,8 @@ export const useStore = create<State & Actions>()(
           s.selection = [];
         }),
 
-      setWarnings: (w) => set((s) => void (s.warnings = w)),
+      setWarnings: (w) =>
+        set((s) => void (s.warnings = typeof w === 'function' ? w(s.warnings) : w)),
       setLoading: (v) => set((s) => void (s.loading = v)),
 
       select: (ids, additive = false) =>

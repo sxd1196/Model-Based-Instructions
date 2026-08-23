@@ -43,3 +43,6 @@ coverage
 
 # Smoke test artifacts
 .smoke/
+
+# WASM is copied from node_modules by scripts/sync-wasm.mjs
+public/wasm/
