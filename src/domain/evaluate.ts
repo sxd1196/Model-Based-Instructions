@@ -261,4 +261,60 @@ export function poseFor(frame: ResolvedFrame, partId: string): Move {
   return frame.poses.get(partId) ?? IDENTITY_MOVE;
 }
 
+/**
+ * Where a part's origin sits RIGHT NOW, in its parent frame.
+ *
+ * Callouts anchored to a part need this so the label tracks the geometry as it
+ * animates. Uses the same composition as SceneBinder: rotate the rest position
+ * about the pivot, then translate.
+ *
+ * Note this is the part's LOCAL position. For parts nested under a group the
+ * viewer must still walk the parent chain; see `resolveAnchorLocal` callers.
+ */
+export function partPositionAt(
+  sequence: Sequence,
+  frame: ResolvedFrame,
+  partId: string,
+): Vec3 | null {
+  const node = sequence.assembly.parts[partId];
+  if (!node) return null;
+
+  const move = poseFor(frame, partId);
+  const rel: Vec3 = [
+    node.restTranslate[0] - move.pivot[0],
+    node.restTranslate[1] - move.pivot[1],
+    node.restTranslate[2] - move.pivot[2],
+  ];
+
+  // Inline quaternion-rotate to keep this module free of extra imports.
+  const [qx, qy, qz, qw] = move.rotate;
+  const tx = 2 * (qy * rel[2] - qz * rel[1]);
+  const ty = 2 * (qz * rel[0] - qx * rel[2]);
+  const tz = 2 * (qx * rel[1] - qy * rel[0]);
+  const spun: Vec3 = [
+    rel[0] + qw * tx + (qy * tz - qz * ty),
+    rel[1] + qw * ty + (qz * tx - qx * tz),
+    rel[2] + qw * tz + (qx * ty - qy * tx),
+  ];
+
+  return [
+    spun[0] + move.pivot[0] + move.translate[0],
+    spun[1] + move.pivot[1] + move.translate[1],
+    spun[2] + move.pivot[2] + move.translate[2],
+  ];
+}
+
+/**
+ * Resolve an annotation's anchor to a concrete point at the current time.
+ * World anchors pass through; part anchors follow the animated part.
+ */
+export function resolveAnnotationPoint(
+  sequence: Sequence,
+  frame: ResolvedFrame,
+  annotation: Annotation,
+): Vec3 | null {
+  if (annotation.anchor.kind === 'world') return annotation.anchor.point;
+  return partPositionAt(sequence, frame, annotation.anchor.partId);
+}
+
 export { IDENTITY_MOVE, IDENTITY_QUAT, ZERO_VEC };

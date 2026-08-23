@@ -4,7 +4,7 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '@/state/store';
-import { resolveFrame } from '@/domain/evaluate';
+import { resolveAnnotationPoint, resolveFrame } from '@/domain/evaluate';
 import { CameraBinder, PlaybackClock, SceneBinder } from './SceneBinder';
 import { DragGizmo, PickHandler } from './Manipulation';
 import type { Assembly } from '@/domain/schema';
@@ -93,36 +93,59 @@ function CameraReporter() {
   return null;
 }
 
-/** HTML callouts pinned to parts, via drei's Html (CSS2D equivalent). */
+/**
+ * HTML callouts pinned to a world point or a moving part.
+ *
+ * Part-anchored labels resolve the part's ANIMATED position each frame, so a
+ * label sticks to its part as the part moves. Redrawn on a rAF-driven tick
+ * rather than per-frame React state, which would violate the no-setState-in-
+ * useFrame rule (AGENTS.md §7).
+ */
 function AnnotationLayer() {
   const sequence = useStore((s) => s.sequence);
-  const time = useStore((s) => s.time);
   const [, force] = useState(0);
+  const raf = useRef<number>(0);
 
   useEffect(() => {
-    const i = setInterval(() => force((n) => n + 1), 100);
-    return () => clearInterval(i);
+    let alive = true;
+    const tick = () => {
+      if (!alive) return;
+      force((n) => (n + 1) % 1000000);
+      raf.current = requestAnimationFrame(tick);
+    };
+    raf.current = requestAnimationFrame(tick);
+    return () => {
+      alive = false;
+      cancelAnimationFrame(raf.current);
+    };
   }, []);
 
   if (!sequence) return null;
+
+  const { time } = useStore.getState();
   const frame = resolveFrame(sequence, time);
 
   return (
     <>
       {frame.annotations.map((a) => {
-        const point =
-          a.anchor.kind === 'world'
-            ? a.anchor.point
-            : ([0, 0, 0] as [number, number, number]);
+        const point = resolveAnnotationPoint(sequence, frame, a);
+        if (!point) return null;
+
         return (
-          <Html
-            key={a.id}
-            position={point}
-            style={{ transform: `translate(${a.offset[0]}px, ${a.offset[1]}px)` }}
-            zIndexRange={[100, 0]}
-          >
-            <div className="callout">{a.text}</div>
-          </Html>
+          <group key={a.id} position={point}>
+            {/* A small marker at the anchor so the label reads as attached. */}
+            <mesh>
+              <sphereGeometry args={[1.5, 8, 8]} />
+              <meshBasicMaterial color="#ffa000" depthTest={false} transparent opacity={0.9} />
+            </mesh>
+            <Html
+              style={{ transform: `translate(${a.offset[0]}px, ${a.offset[1]}px)` }}
+              zIndexRange={[100, 0]}
+              center={false}
+            >
+              <div className="callout">{a.text}</div>
+            </Html>
+          </group>
         );
       })}
     </>

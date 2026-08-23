@@ -17,6 +17,7 @@ export function Inspector() {
   const setOperationCamera = useStore((s) => s.setOperationCamera);
   const setStyle = useStore((s) => s.setStyle);
   const addAnnotation = useStore((s) => s.addAnnotation);
+  const updateAnnotation = useStore((s) => s.updateAnnotation);
   const removeAnnotation = useStore((s) => s.removeAnnotation);
 
   if (!sequence) return <div className="panel-empty">No model loaded</div>;
@@ -208,19 +209,80 @@ export function Inspector() {
             + add
           </button>
         </div>
+
+        {!op.annotations.length && (
+          <div className="hint">
+            Select a part first to pin a callout to it.
+          </div>
+        )}
+
         {op.annotations.map((a) => (
-          <div className="anno-row" key={a.id}>
-            <input
-              value={a.text}
-              onChange={(e) =>
-                updateOperation(op.id, {
-                  annotations: op.annotations.map((x) =>
-                    x.id === a.id ? { ...x, text: e.target.value } : x,
-                  ),
-                })
-              }
-            />
-            <button onClick={() => removeAnnotation(op.id, a.id)}>✕</button>
+          <div className="anno-card" key={a.id}>
+            <div className="anno-row">
+              <input
+                value={a.text}
+                placeholder="Callout text"
+                onChange={(e) => updateAnnotation(op.id, a.id, { text: e.target.value })}
+              />
+              <button onClick={() => removeAnnotation(op.id, a.id)}>✕</button>
+            </div>
+
+            <div className="anno-meta">
+              {a.anchor.kind === 'part' ? (
+                <span title={nameOf(a.anchor.partId)}>
+                  📌 {nameOf(a.anchor.partId)}
+                </span>
+              ) : (
+                <span>🌐 fixed point</span>
+              )}
+
+              <button
+                disabled={!selection.length}
+                title={selection.length ? 'Re-pin to the selected part' : 'Select a part first'}
+                onClick={() =>
+                  updateAnnotation(op.id, a.id, {
+                    anchor: { kind: 'part', partId: selection[0] },
+                  })
+                }
+              >
+                pin to selection
+              </button>
+
+              {a.anchor.kind === 'part' && (
+                <button
+                  title="Detach: freeze at the part's rest position"
+                  onClick={() => {
+                    const partId = (a.anchor as { kind: 'part'; partId: string }).partId;
+                    const rest = sequence.assembly.parts[partId]?.restTranslate ?? [0, 0, 0];
+                    updateAnnotation(op.id, a.id, {
+                      anchor: { kind: 'world', point: [...rest] as [number, number, number] },
+                    });
+                  }}
+                >
+                  unpin
+                </button>
+              )}
+            </div>
+
+            <div className="anno-offset">
+              <span>label offset</span>
+              <input
+                type="number" step={4} value={a.offset[0]}
+                onChange={(e) =>
+                  updateAnnotation(op.id, a.id, {
+                    offset: [Number(e.target.value), a.offset[1]],
+                  })
+                }
+              />
+              <input
+                type="number" step={4} value={a.offset[1]}
+                onChange={(e) =>
+                  updateAnnotation(op.id, a.id, {
+                    offset: [a.offset[0], Number(e.target.value)],
+                  })
+                }
+              />
+            </div>
           </div>
         ))}
       </div>

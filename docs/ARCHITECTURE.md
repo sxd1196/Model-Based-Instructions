@@ -112,6 +112,44 @@ lifts straight up. Free 3D dragging essentially never produces a clean axis, and
 `24.9873mm` reads as sloppy in a work instruction. Both are defeatable in the
 toolbar, but the common case should be correct without thinking about it.
 
+### Group drags compose in affine form, not Move form
+
+A `Move` is stored as "rotate about pivot, then translate" — good for expressing
+authoring intent, awkward to compose. `domain/rigid.ts` converts to plain affine
+form (`x -> R*x + d`), composes there in two lines, and converts back.
+
+This is what lets a multi-part drag produce **one shared Move on one track**
+rather than N independent tracks. `Track.parts` being a list is the schema
+already anticipating this.
+
+The load-bearing property is rigidity: after a group drag, all pairwise
+distances and relative orientations must be unchanged. Tested directly, and
+again across 20 chained drags, because a sub-assembly that visibly deforms while
+you drag it reads as a physics glitch rather than a math error.
+
+### Snap and axis lock are skipped for rotating group drags
+
+Quantizing the translation of a rotated rigid transform breaks the rigidity
+guarantee — the parts would shear apart. Both are applied only when the drag is
+a pure translation.
+
+### The group gizmo sits at the selection centroid
+
+Parking it on one arbitrary member makes a group drag feel like dragging that
+part and having the others follow. The centroid reads as grabbing the whole
+thing. The proxy's orientation resets after each group commit so the next drag
+composes from a clean handle rather than accumulating gizmo rotation.
+
+### Part-anchored callouts resolve the animated position
+
+`partPositionAt` recomputes a part's current position from its rest pose plus
+the evaluated Move, so a label sticks to its part through the whole animation —
+including displacement accumulated in earlier operations. Previously these
+rendered at the origin.
+
+The annotation layer redraws on a `requestAnimationFrame` tick rather than
+per-frame React state, which would violate the no-setState-in-useFrame rule.
+
 ### Quaternion double-cover
 
 `slerpQuat` flips the sign of one input when their dot product is negative. `q`
@@ -177,14 +215,13 @@ ffmpeg, no server, no dependency. Output is WebM.
 
 ## Known limitations
 
-- **Part-anchored annotations render at the origin.** The anchor is stored correctly
-  in the schema; the viewer does not yet resolve part position for `kind: 'part'`.
-  World-anchored callouts work.
 - **Selection highlight uses `BoxHelper`**, not a true outline pass. Cheap and
   robust; a postprocessing outline would look better.
-- **Rotation authoring has no UI.** The schema and evaluator fully support rotation
-  about a pivot; the Inspector only exposes translation. Rotations can be authored by
-  editing project JSON.
-- **Opening a saved project does not reload geometry.** Model files are referenced by
-  name, not embedded. Re-open the `.glb` after loading a project.
+- **Rotation has no numeric UI.** The gizmo rotates and the schema/evaluator
+  fully support rotation about a pivot, but the Inspector exposes only
+  translation fields. Precise rotations require editing project JSON.
+- **Opening a saved project does not reload geometry.** Model files are
+  referenced by name, not embedded. Re-open the `.glb` after loading a project.
+- **Group drags always pivot about the gizmo handle.** There is no UI to pick a
+  different pivot for a group, though the schema stores one per Move.
 - **No collision detection.** Deliberate — see AGENTS.md §9.

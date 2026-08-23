@@ -30,9 +30,10 @@ Convert STEP / SLDASM → glTF first. See [docs/CAD-PIPELINE.md](docs/CAD-PIPELI
 2. **Click a part in the viewport** to select it (shift-click adds, alt-click
    picks the exact sub-mesh). Or use the tree.
 3. **+ Step** on the timeline
-4. **Drag the gizmo** to move the part where it should go. Snapping (5mm) and
-   axis lock are on by default — toggle them in the viewport toolbar.
-   For precise values, type them in the Inspector instead.
+4. **Drag the gizmo** to move the part where it should go. Select several parts
+   (or hit **⛓ Sub-asm**) and they move together as one rigid group — full
+   6-DOF, translate or rotate. Snapping (5mm) and axis lock are on by default;
+   toggle them in the viewport toolbar, or type exact values in the Inspector.
 5. Orbit to a good angle → **Capture view**
 6. Add a title, instruction text, callouts, and ghost/hide the context parts
 7. Repeat. **Space** plays; drag the scrubber to scan
@@ -40,7 +41,10 @@ Convert STEP / SLDASM → glTF first. See [docs/CAD-PIPELINE.md](docs/CAD-PIPELI
 **✷ Explode** seeds the current step with a radial explode of the selection —
 a starting point to hand-edit, not sequence inference.
 
-Ctrl+Z / Ctrl+Shift+Z undo and redo. The gizmo needs exactly one part selected.
+Callouts pin to a part and follow it as it moves — use **pin to selection** in
+the Inspector to re-anchor one, or **unpin** to freeze it in space.
+
+Ctrl+Z / Ctrl+Shift+Z undo and redo.
 
 ## Export
 
@@ -52,7 +56,7 @@ Ctrl+Z / Ctrl+Shift+Z undo and redo. The gizmo needs exactly one part selected.
 
 ```bash
 npm run dev         # dev server
-npm test            # 161 tests, no browser needed
+npm test            # 202 tests, no browser needed
 npm run build       # typecheck + production build
 npm run typecheck   # types only
 ```

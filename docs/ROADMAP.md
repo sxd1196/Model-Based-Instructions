@@ -13,11 +13,13 @@ The bar: author a complete teardown of a real 200+ part assembly without touchin
       inverted back into a schema Move, with snap and axis lock
 - [x] **Auto-explode helper** — radial explode from the selection centroid as a
       starting point, then hand-edit
-- [ ] **Rotation UI in the Inspector** — the gizmo can rotate, but there is no
-      numeric axis/angle/pivot entry
-- [ ] **Multi-part gizmo** — dragging needs exactly one selected part today;
-      moving a sub-assembly rigidly needs a shared frame and a group commit
-- [ ] **Part-anchored callouts** — schema is right, viewer renders them at origin
+- [x] **Multi-part / sub-assembly gizmo** — one rigid Move on one track, gizmo at
+      the selection centroid, full 6-DOF, rigidity verified by test
+- [x] **Part-anchored callouts** — labels follow the animated part, with anchor
+      re-pinning and screen-offset controls in the Inspector
+- [ ] **Rotation numeric entry** — the gizmo rotates, but there is no axis/angle/
+      pivot field in the Inspector
+- [ ] **Per-group pivot UI** — group drags always pivot about the gizmo handle
 - [ ] **Embed geometry in project files** — opening a project should not require
       re-opening the `.glb`
 

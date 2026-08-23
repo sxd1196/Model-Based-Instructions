@@ -144,8 +144,26 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .xyz label { flex: 1; display: flex; align-items: center; gap: 3px; }
 .xyz label > span { font-size: 10px; color: var(--muted); width: 10px; }
 .xyz input { width: 100%; padding: 3px 5px; }
-.anno-row { display: flex; gap: 5px; margin-bottom: 5px; }
+.anno-card {
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 7px; margin-bottom: 7px;
+}
+.anno-row { display: flex; gap: 5px; }
 .anno-row input { flex: 1; }
+.anno-meta {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  margin-top: 6px; font-size: 11px; color: var(--muted);
+}
+.anno-meta > span {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 110px;
+}
+.anno-meta button { font-size: 10px; padding: 2px 6px; }
+.anno-offset {
+  display: flex; align-items: center; gap: 5px; margin-top: 6px;
+  font-size: 11px; color: var(--muted);
+}
+.anno-offset input { width: 52px; padding: 2px 5px; }
 
 /* ---------- timeline ---------- */
 .bottom { flex-shrink: 0; background: var(--panel); border-top: 1px solid var(--line); }

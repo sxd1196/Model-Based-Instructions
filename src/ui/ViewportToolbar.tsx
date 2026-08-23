@@ -15,10 +15,10 @@ export function ViewportToolbar() {
   const setAxisLock = useStore((s) => s.setAxisLock);
   const setPickEnabled = useStore((s) => s.setPickEnabled);
   const explodeSelection = useStore((s) => s.explodeSelection);
+  const selectSubassemblyOf = useStore((s) => s.selectSubassemblyOf);
 
   if (!sequence) return null;
 
-  const canDrag = selection.length === 1 && !!activeOperationId;
 
   return (
     <div className="vp-toolbar">
@@ -67,6 +67,13 @@ export function ViewportToolbar() {
 
       <div className="vp-group">
         <button
+          disabled={selection.length !== 1}
+          onClick={() => selection[0] && selectSubassemblyOf(selection[0])}
+          title="Select the whole sub-assembly this part belongs to"
+        >
+          ⛓ Sub-asm
+        </button>
+        <button
           disabled={!selection.length || !activeOperationId}
           onClick={() => explodeSelection(0.6)}
           title="Radial explode the selection as a starting point"
@@ -78,11 +85,11 @@ export function ViewportToolbar() {
       <div className="vp-hint">
         {!activeOperationId
           ? 'Add a step to start authoring'
-          : canDrag
-            ? 'Drag the gizmo to author motion'
-            : selection.length > 1
-              ? `${selection.length} selected — gizmo needs exactly 1`
-              : 'Click a part to select'}
+          : selection.length > 1
+            ? `${selection.length} parts — drag moves them as one rigid group`
+            : selection.length === 1
+              ? 'Drag the gizmo to author motion'
+              : 'Click a part · shift adds · alt picks exact mesh'}
       </div>
     </div>
   );

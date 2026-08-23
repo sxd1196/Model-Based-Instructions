@@ -36,6 +36,7 @@ import {
   selectableParts,
   snapTranslate,
 } from '@/domain/authoring';
+import { groupMoveFromDrag } from '@/domain/rigid';
 
 const uid = () => crypto.randomUUID();
 
@@ -101,8 +102,20 @@ interface Actions {
    * Creates the track if the part has none yet, updates it otherwise.
    */
   commitDrag: (partId: string, position: Vec3, rotation: Quat) => void;
+  /**
+   * Commit a RIGID group drag: one shared Move applied to every part, kept on
+   * a single track so the group stays one unit.
+   */
+  commitGroupDrag: (
+    partIds: string[],
+    gizmoStart: Vec3,
+    gizmoEnd: Vec3,
+    gizmoRotation: Quat,
+  ) => void;
   /** Seed the active operation with a radial explode of the selection. */
   explodeSelection: (factor: number) => void;
+  /** Select an entire sub-assembly by any member part. */
+  selectSubassemblyOf: (partId: string, additive?: boolean) => void;
 
   setTime: (t: number) => void;
   play: () => void;
@@ -125,6 +138,11 @@ interface Actions {
   setOperationCamera: (operationId: string, pose: CameraPose | null) => void;
   setHomeCamera: (pose: CameraPose | null) => void;
   addAnnotation: (operationId: string, a: Omit<Annotation, 'id'>) => void;
+  updateAnnotation: (
+    operationId: string,
+    annotationId: string,
+    patch: Partial<Omit<Annotation, 'id'>>,
+  ) => void;
   removeAnnotation: (operationId: string, annotationId: string) => void;
   setStyle: (operationId: string, style: PartStyle) => void;
 
@@ -276,6 +294,83 @@ export const useStore = create<State & Actions>()(
           }
         });
       },
+
+      commitGroupDrag: (partIds, gizmoStart, gizmoEnd, gizmoRotation) => {
+        const state = get();
+        const sequence = state.sequence;
+        const opId = state.activeOperationId;
+        if (!sequence || !opId || !partIds.length) return;
+
+        const parts = selectableParts(sequence.assembly, partIds);
+        if (!parts.length) return;
+
+        const op = sequence.operations.find((o) => o.id === opId);
+        // Reuse the track only if it drives EXACTLY this group, so dragging a
+        // sub-assembly never silently rewrites an unrelated part's motion.
+        const existing = op?.tracks.find(
+          (t) =>
+            t.parts.length === parts.length &&
+            t.parts.every((p) => parts.includes(p)),
+        );
+
+        let move = groupMoveFromDrag(
+          existing?.to ?? null,
+          gizmoStart,
+          gizmoEnd,
+          gizmoRotation,
+        );
+
+        // Snap and axis lock only make sense for pure translations; applying
+        // them to a rotated group would break rigidity.
+        const rotated = Math.abs(Math.abs(move.rotate[3]) - 1) > 1e-6;
+        if (!rotated) {
+          if (state.axisLock) {
+            move = { ...move, translate: constrainToDominantAxis(move.translate) };
+          }
+          if (state.snap > 0) {
+            move = { ...move, translate: snapTranslate(move.translate, state.snap) };
+          }
+        }
+
+        if (isIdentityMove(move) && !existing) return;
+
+        checkpoint('Drag group');
+        set((s) => {
+          const target = findOp(s, opId);
+          if (!target) return;
+          const track = target.tracks.find(
+            (t) => t.parts.length === parts.length && t.parts.every((p) => parts.includes(p)),
+          );
+          if (track) {
+            track.to = move;
+          } else {
+            target.tracks.push({
+              id: uid(),
+              parts,
+              from: IDENTITY_MOVE,
+              to: move,
+              start: 0,
+              end: 1,
+              easing: 'easeInOut',
+            });
+          }
+        });
+      },
+
+      selectSubassemblyOf: (partId, additive = false) =>
+        set((s) => {
+          if (!s.sequence) return;
+          const node = s.sequence.assembly.parts[partId];
+          if (!node) return;
+          // Climb to the highest ancestor below the root, then take everything.
+          const rootId = resolveSelectionTarget(s.sequence.assembly, partId) ?? partId;
+          const ancestor = s.sequence.assembly.parts[rootId];
+          const groupId = ancestor?.parentId ?? rootId;
+          const ids = selectableParts(s.sequence.assembly, [groupId]);
+          s.selection = additive
+            ? Array.from(new Set([...s.selection, ...ids]))
+            : ids;
+        }),
 
       explodeSelection: (factor) => {
         const state = get();
@@ -459,6 +554,14 @@ export const useStore = create<State & Actions>()(
         set((s) => {
           const op = findOp(s, operationId);
           if (op) op.annotations.push({ ...a, id: uid() });
+        });
+      },
+
+      updateAnnotation: (operationId, annotationId, patch) => {
+        checkpoint('Edit annotation');
+        set((s) => {
+          const a = findOp(s, operationId)?.annotations.find((x) => x.id === annotationId);
+          if (a) Object.assign(a, patch);
         });
       },
 
