@@ -1,12 +1,9 @@
 /** Inspector: edit the active operation, its motions, camera, and callouts. */
 import { useStore } from '@/state/store';
-import type { CameraPose, Easing, Move } from '@/domain/schema';
-import { IDENTITY_QUAT } from '@/domain/schema';
+import type { CameraPose } from '@/domain/schema';
 import { hasMark, richColor, setColor, syncRichToPlain, toggleMark } from '@/domain/richtext';
 
 const MARK_GLYPH = { bold: 'B', italic: 'I', underline: 'U', sup: 'x²', sub: 'x₂', code: '</>' } as const;
-
-const EASINGS: Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'step'];
 
 export function Inspector() {
   const sequence = useStore((s) => s.sequence);
@@ -14,9 +11,6 @@ export function Inspector() {
   const selection = useStore((s) => s.selection);
 
   const updateOperation = useStore((s) => s.updateOperation);
-  const addTrack = useStore((s) => s.addTrack);
-  const updateTrack = useStore((s) => s.updateTrack);
-  const removeTrack = useStore((s) => s.removeTrack);
   const setOperationCamera = useStore((s) => s.setOperationCamera);
   const setStyle = useStore((s) => s.setStyle);
   const addAnnotation = useStore((s) => s.addAnnotation);
@@ -64,102 +58,7 @@ export function Inspector() {
         />
       </label>
 
-      <div className="field-row">
-        <label className="field">
-          <span>Duration (s)</span>
-          <input
-            type="number"
-            min={0.1}
-            step={0.1}
-            value={op.duration}
-            onChange={(e) =>
-              updateOperation(op.id, { duration: Math.max(0.1, Number(e.target.value)) })
-            }
-          />
-        </label>
-        <label className="field">
-          <span>Dwell (s)</span>
-          <input
-            type="number"
-            min={0}
-            step={0.1}
-            value={op.dwell}
-            onChange={(e) =>
-              updateOperation(op.id, { dwell: Math.max(0, Number(e.target.value)) })
-            }
-          />
-        </label>
-      </div>
 
-      <div className="section">
-        <div className="section-head">
-          <span>Motions</span>
-          <button
-            disabled={!selection.length}
-            onClick={() => addTrack(op.id, selection)}
-            title={selection.length ? '' : 'Select parts first'}
-          >
-            + from selection ({selection.length})
-          </button>
-        </div>
-
-        {!op.tracks.length && <div className="hint">No motion yet.</div>}
-
-        {op.tracks.map((track) => (
-          <div className="track-card" key={track.id}>
-            <div className="track-head">
-              <span title={track.parts.map(nameOf).join(', ')}>
-                {track.parts.length === 1
-                  ? nameOf(track.parts[0])
-                  : `${track.parts.length} parts`}
-              </span>
-              <button onClick={() => removeTrack(op.id, track.id)}>✕</button>
-            </div>
-
-            <MoveEditor
-              label="Move to (mm)"
-              move={track.to}
-              onChange={(to) => updateTrack(op.id, track.id, { to })}
-            />
-
-            <div className="field-row">
-              <label className="field">
-                <span>Easing</span>
-                <select
-                  value={track.easing}
-                  onChange={(e) =>
-                    updateTrack(op.id, track.id, { easing: e.target.value as Easing })
-                  }
-                >
-                  {EASINGS.map((x) => (
-                    <option key={x} value={x}>{x}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Start</span>
-                <input
-                  type="number" min={0} max={1} step={0.05}
-                  value={track.start}
-                  onChange={(e) =>
-                    updateTrack(op.id, track.id, { start: clamp01(Number(e.target.value)) })
-                  }
-                />
-              </label>
-              <label className="field">
-                <span>End</span>
-                <input
-                  type="number" min={0} max={1} step={0.05}
-                  value={track.end}
-                  onChange={(e) =>
-                    updateTrack(op.id, track.id, { end: clamp01(Number(e.target.value)) })
-                  }
-                />
-              </label>
-            </div>
-          </div>
-        ))}
-      </div>
 
       <div className="section">
         <div className="section-head">
@@ -341,59 +240,4 @@ export function Inspector() {
   );
 }
 
-function MoveEditor({
-  label,
-  move,
-  onChange,
-}: {
-  label: string;
-  move: Move;
-  onChange: (m: Move) => void;
-}) {
-  const set = (i: number, v: number) => {
-    const t = [...move.translate] as [number, number, number];
-    t[i] = v;
-    onChange({ ...move, translate: t });
-  };
 
-  return (
-    <div className="move-editor">
-      <span className="move-label">{label}</span>
-      <div className="xyz">
-        {(['X', 'Y', 'Z'] as const).map((axis, i) => (
-          <label key={axis}>
-            <span>{axis}</span>
-            <input
-              type="number"
-              step={1}
-              value={move.translate[i]}
-              onChange={(e) => set(i, Number(e.target.value))}
-            />
-          </label>
-        ))}
-      </div>
-      <div className="btn-row small">
-        {([['+X', 0, 1], ['-X', 0, -1], ['+Y', 1, 1], ['-Y', 1, -1], ['+Z', 2, 1], ['-Z', 2, -1]] as const).map(
-          ([lbl, axis, dir]) => (
-            <button
-              key={lbl}
-              onClick={() => set(axis, move.translate[axis] + 25 * dir)}
-              title="Nudge 25mm"
-            >
-              {lbl}
-            </button>
-          ),
-        )}
-        <button
-          onClick={() =>
-            onChange({ translate: [0, 0, 0], rotate: IDENTITY_QUAT, pivot: move.pivot })
-          }
-        >
-          reset
-        </button>
-      </div>
-    </div>
-  );
-}
-
-const clamp01 = (n: number) => Math.max(0, Math.min(1, n));

@@ -141,6 +141,11 @@ interface Actions {
 
   addTrack: (operationId: string, parts: string[], to?: Move) => void;
   updateTrack: (operationId: string, trackId: string, patch: Partial<Track>) => void;
+  /** Patch every track in a merged lane at once (timing edits move together). */
+  updateLaneTracks: (operationId: string, trackIds: string[], patch: Partial<Track>) => void;
+  removeLaneTracks: (operationId: string, trackIds: string[]) => void;
+  /** Typed-entry path: add an identity motion for the selection at the step tail. */
+  addMotionForSelection: (operationId: string) => void;
   removeTrack: (operationId: string, trackId: string) => void;
 
   setOperationCamera: (operationId: string, pose: CameraPose | null) => void;
@@ -593,6 +598,100 @@ export const useStore = create<State & Actions>()(
         set((s) => {
           const track = findOp(s, operationId)?.tracks.find((t) => t.id === trackId);
           if (track) Object.assign(track, patch);
+        });
+      },
+
+      /**
+       * Patch every track in a merged LANE at once. A sub-assembly drag is
+       * one visual lane over several cluster tracks; editing its timing must
+       * move them together or the lane silently splits.
+       */
+      updateLaneTracks: (operationId, trackIds, patch) => {
+        checkpoint('Edit motion');
+        set((s) => {
+          const op = findOp(s, operationId);
+          if (!op) return;
+          for (const t of op.tracks) {
+            if (trackIds.includes(t.id)) Object.assign(t, patch);
+          }
+        });
+      },
+
+      removeLaneTracks: (operationId, trackIds) => {
+        checkpoint('Delete motion');
+        set((s) => {
+          const op = findOp(s, operationId);
+          if (op) op.tracks = op.tracks.filter((t) => !trackIds.includes(t.id));
+        });
+      },
+
+      /**
+       * Add a typed motion for the selection: one track per parent cluster
+       * (same shape a gizmo drag commits), defaulting to the tail of the
+       * step so consecutive adds chain naturally.
+       */
+      addMotionForSelection: (operationId) => {
+        const st = get();
+        const sequence = st.sequence;
+        if (!sequence || !st.selection.length) return;
+
+        const parts = selectableParts(sequence.assembly, st.selection);
+        if (!parts.length) return;
+
+        // Start where this part-set's last lane ends, so a second motion on
+        // the same parts begins as "then" rather than overlapping. When the
+        // last lane fills the whole step (the default), SPLIT the step:
+        // earlier lanes compress to make room and the new one takes the
+        // tail. n motions -> n equal windows, which is the choreography an
+        // author means by "add another motion".
+        const op = sequence.operations.find((o) => o.id === operationId);
+        const overlapping = op
+          ? op.tracks.filter((t) => t.parts.some((p) => parts.includes(p)))
+          : [];
+        let start = 0;
+        let compress: Map<string, [number, number]> | null = null;
+
+        if (overlapping.length) {
+          const tailEnd = Math.max(...overlapping.map((t) => t.end));
+          if (tailEnd < 0.98) {
+            start = tailEnd;
+          } else {
+            // Recompute every overlapping lane into equal windows 0..k/(n+1),
+            // preserving their relative order; the new motion gets the rest.
+            const ordered = [...overlapping].sort((a, b) => a.start - b.start);
+            const n = ordered.length + 1;
+            compress = new Map();
+            ordered.forEach((t, i) => {
+              compress!.set(t.id, [i / n, (i + 1) / n]);
+            });
+            start = (n - 1) / n;
+          }
+        }
+
+        checkpoint('Add motion');
+        set((s) => {
+          const target = findOp(s, operationId);
+          if (!target) return;
+          if (compress) {
+            for (const t of target.tracks) {
+              const win = compress.get(t.id);
+              if (win) {
+                t.start = win[0];
+                t.end = win[1];
+              }
+            }
+          }
+          for (const cluster of clusterByParentFrame(sequence.assembly, parts)) {
+            target.tracks.push({
+              id: uid(),
+              parts: cluster.parts,
+              from: IDENTITY_MOVE,
+              to: IDENTITY_MOVE,
+              start,
+              end: 1,
+              easing: 'easeInOut',
+            });
+          }
         });
       },
 

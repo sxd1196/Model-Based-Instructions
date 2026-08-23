@@ -239,6 +239,70 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .vp-label { font-size: 9px; letter-spacing: .3px; text-transform: uppercase; opacity: .75; }
 .vp-mode.on .vp-label { opacity: 1; }
 
+/* ---------- motion lanes ---------- */
+.lanes { border-top: 1px solid var(--border, #262b36); padding: 4px 10px 6px; }
+.lanes-head {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 11px; color: #8b93a3; padding: 2px 0 4px;
+}
+.lanes-title { font-weight: 600; letter-spacing: .04em; text-transform: uppercase; font-size: 10px; }
+.lanes-head label { display: flex; align-items: center; gap: 4px; }
+.lanes-head input {
+  width: 44px; background: #161a22; border: 1px solid #262b36; color: #dfe3ea;
+  border-radius: 4px; padding: 2px 4px; font-size: 11px;
+}
+.lanes-add { margin-left: auto; font-size: 11px; }
+.lanes-empty { color: #6a7180; font-size: 11px; padding: 4px 0 6px; }
+.lanes-scroll { max-height: 116px; overflow-y: auto; }
+
+.lane { border-radius: 5px; margin-bottom: 2px; background: #141821; }
+.lane.open { background: #171c27; outline: 1px solid #2a3142; }
+.lane-line {
+  display: grid; align-items: center; cursor: pointer;
+  grid-template-columns: 140px minmax(90px, 170px) 1fr 92px 22px;
+  gap: 10px; padding: 3px 8px; font-size: 11px;
+}
+.lane-line:hover { background: #1a1f2b; }
+.lane-parts { color: #dfe3ea; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lane-desc { color: #9aa3b5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lane-time { color: #7d8596; text-align: right; font-variant-numeric: tabular-nums; }
+.lane-x { visibility: hidden; background: none; border: none; color: #6a7180; cursor: pointer; }
+.lane-line:hover .lane-x { visibility: visible; }
+.lane-x:hover { color: #e66; }
+
+.lane-bar-host {
+  position: relative; height: 12px; background: #10131a;
+  border-radius: 6px; overflow: hidden;
+}
+.lane-bar {
+  position: absolute; top: 1px; bottom: 1px; border-radius: 5px;
+  background: linear-gradient(180deg, #ffa94d, #f08c00);
+  cursor: grab; min-width: 8px;
+}
+.lane-bar:active { cursor: grabbing; }
+.lane-grip {
+  position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize;
+}
+.lane-grip.left { left: 0; border-radius: 5px 0 0 5px; }
+.lane-grip.right { right: 0; border-radius: 0 5px 5px 0; }
+.lane-grip:hover { background: rgba(255,255,255,.25); }
+
+.lane-editor {
+  display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+  padding: 6px 10px 8px; border-top: 1px solid #1d2330; font-size: 11px;
+}
+.lane-field-group { display: flex; align-items: center; gap: 6px; }
+.lane-field-label { color: #7d8596; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.lane-num { display: flex; align-items: center; gap: 3px; color: #9aa3b5; }
+.lane-num input {
+  width: 56px; background: #10131a; border: 1px solid #262b36; color: #dfe3ea;
+  border-radius: 4px; padding: 2px 5px; font-size: 11px; text-align: right;
+}
+.lane-editor select {
+  background: #10131a; border: 1px solid #262b36; color: #dfe3ea;
+  border-radius: 4px; padding: 2px 4px; font-size: 11px;
+}
+
 /* ---------- drag and drop ---------- */
 .app.drag-over::after {
   content: ''; position: fixed; inset: 0; z-index: 900;

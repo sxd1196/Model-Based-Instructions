@@ -1,6 +1,7 @@
-/** Operation list + scrubber. The authoring spine of the app. */
+/** Operation list + scrubber + motion lanes. The authoring spine of the app. */
 import { useStore } from '@/state/store';
 import { buildTimeline, totalDuration } from '@/domain/evaluate';
+import { MotionLanes } from './MotionLanes';
 
 export function Timeline() {
   const sequence = useStore((s) => s.sequence);
@@ -22,6 +23,7 @@ export function Timeline() {
 
   const timeline = buildTimeline(sequence);
   const total = totalDuration(sequence);
+  const activeOp = sequence.operations.find((o) => o.id === activeId) ?? null;
 
   return (
     <div className="timeline">
@@ -84,6 +86,11 @@ export function Timeline() {
           <div className="playhead" style={{ left: `${(time / total) * 100}%` }} />
         )}
       </div>
+
+      {/* The active step's choreography: motion lanes with draggable timing.
+          Motion lives HERE (temporal); the Inspector keeps what the step
+          SAYS (title, instruction, camera, callouts). */}
+      {activeOp && <MotionLanes op={activeOp} />}
     </div>
   );
 }

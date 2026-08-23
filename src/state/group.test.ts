@@ -180,6 +180,92 @@ describe('commitGroupDrag', () => {
   });
 });
 
+describe('addMotionForSelection (typed-entry path)', () => {
+  it('first motion spans the whole step', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('Cover_Plate')] });
+    s().addMotionForSelection(opId);
+    const t = s().sequence!.operations[0].tracks;
+    expect(t).toHaveLength(1);
+    expect([t[0].start, t[0].end]).toEqual([0, 1]);
+  });
+
+  it('a second motion on the same part SPLITS the step into equal windows', () => {
+    // "Add another motion" means "then do this" — lane 1 compresses to the
+    // first half, lane 2 takes the second, chaining via the evaluator.
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('Cover_Plate')] });
+    s().addMotionForSelection(opId);
+    s().addMotionForSelection(opId);
+
+    const t = s().sequence!.operations[0].tracks;
+    expect(t).toHaveLength(2);
+    expect([t[0].start, t[0].end]).toEqual([0, 0.5]);
+    expect([t[1].start, t[1].end]).toEqual([0.5, 1]);
+  });
+
+  it('a third motion makes thirds, preserving order', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('Cover_Plate')] });
+    s().addMotionForSelection(opId);
+    s().addMotionForSelection(opId);
+    s().addMotionForSelection(opId);
+
+    const t = s().sequence!.operations[0].tracks;
+    expect(t).toHaveLength(3);
+    expect(t[0].end).toBeCloseTo(1 / 3, 6);
+    expect(t[1].start).toBeCloseTo(1 / 3, 6);
+    expect(t[2].start).toBeCloseTo(2 / 3, 6);
+  });
+
+  it('a motion for a DIFFERENT part is untouched by the split', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('Cover_Plate')] });
+    s().addMotionForSelection(opId);
+    useStore.setState({ selection: [idOf('Main_Shaft')] });
+    s().addMotionForSelection(opId);
+
+    const t = s().sequence!.operations[0].tracks;
+    // The plate's lane keeps its full window; the shaft gets its own.
+    expect([t[0].start, t[0].end]).toEqual([0, 1]);
+    expect([t[1].start, t[1].end]).toEqual([0, 1]);
+  });
+
+  it('a sub-assembly selection writes one track per parent cluster', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('SUB_Cover')] });
+    s().addMotionForSelection(opId);
+    // 8 bolt clusters + plate/gasket cluster.
+    expect(s().sequence!.operations[0].tracks).toHaveLength(9);
+  });
+});
+
+describe('updateLaneTracks / removeLaneTracks', () => {
+  it('patches every track in a merged lane together', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('SUB_Cover')] });
+    s().addMotionForSelection(opId);
+    const ids = s().sequence!.operations[0].tracks.map((t) => t.id);
+
+    s().updateLaneTracks(opId, ids, { start: 0.25, end: 0.75 });
+    for (const t of s().sequence!.operations[0].tracks) {
+      expect([t.start, t.end]).toEqual([0.25, 0.75]);
+    }
+  });
+
+  it('removes a whole merged lane in one undoable step', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('SUB_Cover')] });
+    s().addMotionForSelection(opId);
+    const ids = s().sequence!.operations[0].tracks.map((t) => t.id);
+
+    s().removeLaneTracks(opId, ids);
+    expect(s().sequence!.operations[0].tracks).toHaveLength(0);
+    s().undo();
+    expect(s().sequence!.operations[0].tracks).toHaveLength(9);
+  });
+});
+
 describe('selectSubassemblyOf', () => {
   it('selects every mesh in the containing sub-assembly', () => {
     s().selectSubassemblyOf(idOf('Bolt_M8_01_Shank'));

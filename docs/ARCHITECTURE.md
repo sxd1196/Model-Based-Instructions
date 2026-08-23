@@ -243,6 +243,28 @@ shipped bug:
    user watched it go. If these diverge the part jumps on release; a
    regression test pins them equal.
 
+## Motion lanes (2026-08-23)
+
+The bottom bar owns everything TEMPORAL; the Inspector owns what the step
+SAYS (title, instruction, camera, appearance, callouts). The boundary rule:
+a step is one work-instruction card — one image, one instruction, one camera
+— and its choreography (N motions) lives in lanes under the chip strip.
+
+- `domain/lanes.ts` is the pure layer: axis+angle <-> quaternion (near-
+  cardinal display snap ~1°), track->lane merging (identical motion+timing
+  collapses cluster tracks into one lane), the "↑ Z 120mm · ⟳ Z 90°"
+  sentence, fraction<->seconds, and magnetic edge snap.
+- Timing DISPLAYS in seconds but is STORED as fractions of the step, so
+  stretching a step's duration stretches its choreography proportionally.
+- Easing is deliberately absent from the UI (defaults easeInOut, still in
+  the schema).
+- Multiple tracks on one part CHAIN in the evaluator (see chaining.test.ts):
+  leg i runs from leg i-1's `to`; stored `from` seeds only the first leg.
+  Editing an earlier leg re-bases later ones by construction.
+- `addMotionForSelection` is the typed-entry path: + Motion appends an
+  identity lane at the step tail; when the step is full it SPLITS existing
+  lanes for that part-set into equal windows (n motions = n windows).
+
 ## Known limitations
 
 - ~~**Selection highlight uses `BoxHelper`**, not a true outline pass. Cheap and~~
