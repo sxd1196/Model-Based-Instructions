@@ -13,8 +13,6 @@ import { indexScene } from '@/cad/loadGltf';
 import {
   applyDragPolicy,
   clusterByParentFrame,
-  effectiveDragMove,
-  parentWorldTransform,
   resolveGizmoState,
   selectableParts,
 } from '@/domain/authoring';
@@ -193,14 +191,12 @@ const ONE = new THREE.Vector3(1, 1, 1);
 export function DragGizmo({ scene, assembly }: Props) {
   const { camera, gl } = useThree();
   const selection = useStore((s) => s.selection);
-  const commitDrag = useStore((s) => s.commitDrag);
   const commitGroupDrag = useStore((s) => s.commitGroupDrag);
   const pause = useStore((s) => s.pause);
 
   const matrix = useRef(new THREE.Matrix4());
   const dragging = useRef(false);
   const dragStart = useRef(new THREE.Vector3());
-  const startQuat = useRef(new THREE.Quaternion());
   const lastPos = useRef(new THREE.Vector3());
   const lastQuat = useRef(new THREE.Quaternion());
 
@@ -212,6 +208,32 @@ export function DragGizmo({ scene, assembly }: Props) {
   const isGroup = selection.length > 1;
   const targetId = selection.length === 1 ? selection[0] : null;
   const target = targetId ? index.get(targetId) : null;
+
+  /**
+   * A part's VISUAL centre: world-space bounding-box centre, not its origin.
+   *
+   * Real CAD meshes frequently bake geometry in world coordinates and leave
+   * every node origin at the model origin — parking the gizmo at
+   * getWorldPosition() then drops it in the middle of the model, nowhere
+   * near the part (and pivoting there would swing the part around the whole
+   * assembly). The local-space box is cached per geometry; only the
+   * local->world transform runs per frame.
+   */
+  const localCenters = useRef(new WeakMap<THREE.Object3D, THREE.Vector3>());
+  const visualCenter = useCallback((obj: THREE.Object3D, out: THREE.Vector3) => {
+    let center = localCenters.current.get(obj);
+    if (!center) {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh && mesh.geometry) {
+        if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+        center = mesh.geometry.boundingBox!.getCenter(new THREE.Vector3());
+      } else {
+        center = new THREE.Vector3();
+      }
+      localCenters.current.set(obj, center);
+    }
+    return obj.localToWorld(out.copy(center));
+  }, []);
 
   /** Park the widget on its target while idle; never fight an active drag. */
   useFrame(() => {
@@ -232,23 +254,23 @@ export function DragGizmo({ scene, assembly }: Props) {
           rect.left + ((_arrow.x + 1) / 2) * rect.width,
           rect.top + ((1 - _arrow.y) / 2) * rect.height,
         ],
-        target: target ? target.getWorldPosition(_scratch).toArray() : null,
+        target: target ? visualCenter(target, _scratch).toArray() : null,
         dragging: dragging.current,
       };
     }
     if (dragging.current) return;
 
     if (target) {
-      target.getWorldPosition(_acc);
+      visualCenter(target, _acc);
     } else if (isGroup) {
-      // Group handle sits at the selection centroid, so a drag feels like
-      // grabbing the whole thing rather than one arbitrary member.
+      // Group handle sits at the selection's visual centroid, so a drag
+      // feels like grabbing the whole thing rather than one arbitrary member.
       _acc.set(0, 0, 0);
       let n = 0;
       for (const id of selection) {
         const obj = index.get(id);
         if (!obj) continue;
-        obj.getWorldPosition(_scratch);
+        visualCenter(obj, _scratch);
         _acc.add(_scratch);
         n++;
       }
@@ -263,31 +285,23 @@ export function DragGizmo({ scene, assembly }: Props) {
     matrix.current.compose(_acc, IDENT_Q, ONE);
   });
 
-  /** Recompute the provisional per-part Moves for the current handle pose. */
+  /**
+   * Recompute the provisional per-part Moves for the current handle pose.
+   *
+   * ONE path for single parts and groups: the drag is a WORLD rigid
+   * transform about the handle's start position, re-expressed per parent
+   * cluster. This is what makes rotation pivot about the handle (the part's
+   * visual centre) rather than the part's node origin — on real CAD meshes
+   * the origin often sits at the model origin, and pivoting there swings
+   * the part around the entire assembly.
+   */
   const previewFromHandle = useCallback((): Array<[string, Move]> | null => {
     const st = useStore.getState();
     if (!st.sequence) return null;
     const policy = { snap: st.snap, axisLock: st.axisLock };
 
-    if (targetId) {
-      const node = st.sequence.assembly.parts[targetId];
-      if (!node) return null;
-      // Dragged world rotation = drag delta on top of where the part started.
-      _mquat.copy(lastQuat.current).multiply(startQuat.current);
-      const move = effectiveDragMove(
-        node.restTranslate,
-        node.restRotate,
-        [lastPos.current.x, lastPos.current.y, lastPos.current.z],
-        [_mquat.x, _mquat.y, _mquat.z, _mquat.w],
-        policy,
-        parentWorldTransform(st.sequence.assembly, targetId),
-      );
-      return [[targetId, move]];
-    }
-
-    // Group: one local Move PER PARENT CLUSTER expressing the same world
-    // motion — the exact math commitGroupDrag uses, so preview == commit.
     const parts = selectableParts(st.sequence.assembly, selection);
+    if (!parts.length) return null;
     const op = st.sequence.operations.find((o) => o.id === st.activeOperationId);
     const s = dragStart.current;
     const gStart: [number, number, number] = [s.x, s.y, s.z];
@@ -312,7 +326,7 @@ export function DragGizmo({ scene, assembly }: Props) {
       for (const id of cluster.parts) out.push([id, move]);
     }
     return out;
-  }, [targetId, selection]);
+  }, [selection]);
 
   const onDragStart = useCallback(() => {
     pause();
@@ -323,11 +337,8 @@ export function DragGizmo({ scene, assembly }: Props) {
     lastPos.current.copy(_mpos);
     lastQuat.current.identity();
 
-    if (target) target.getWorldQuaternion(startQuat.current);
-    else startQuat.current.identity();
-
     beginPreview();
-  }, [pause, target]);
+  }, [pause]);
 
   const onDrag = useCallback(
     (l: THREE.Matrix4) => {
@@ -350,20 +361,11 @@ export function DragGizmo({ scene, assembly }: Props) {
     dragging.current = false;
     endPreview();
 
-    // Commit through the store — the SAME shared functions shape the final
-    // Move, so it lands exactly where the preview left it.
-    _mquat.copy(lastQuat.current).multiply(startQuat.current);
-    if (targetId) {
-      commitDrag(
-        targetId,
-        [lastPos.current.x, lastPos.current.y, lastPos.current.z],
-        [_mquat.x, _mquat.y, _mquat.z, _mquat.w],
-      );
-      return;
-    }
-
-    if (selection.length > 1) {
-      const s = dragStart.current;
+    // Commit through the store — commitGroupDrag runs the SAME cluster math
+    // as the preview (single parts are just a one-member group), so the part
+    // lands exactly where the preview left it.
+    const s = dragStart.current;
+    if (selection.length > 0) {
       commitGroupDrag(
         selection,
         [s.x, s.y, s.z],
@@ -371,7 +373,7 @@ export function DragGizmo({ scene, assembly }: Props) {
         [lastQuat.current.x, lastQuat.current.y, lastQuat.current.z, lastQuat.current.w],
       );
     }
-  }, [targetId, selection, commitDrag, commitGroupDrag]);
+  }, [selection, commitGroupDrag]);
 
   // Widget size: fraction of the selection's own footprint so it reads as
   // attached to the part on a bolt and on a housing alike.

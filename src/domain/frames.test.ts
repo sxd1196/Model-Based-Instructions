@@ -16,6 +16,7 @@ import {
 } from './authoring';
 import {
   clusterMoveFromDrag,
+  WORLD_FRAME,
   rigidToParentFrame,
   poseToParentFrame,
   applyRigid,
@@ -137,6 +138,44 @@ describe('clusterByParentFrame', () => {
       idOf('Cover_Gasket'),
     ]);
     expect(clusters.length).toBe(1);
+  });
+});
+
+describe('REGRESSION: off-origin CAD meshes (origins at model origin)', () => {
+  // Real STEP imports frequently bake geometry in world coordinates: every
+  // node origin sits at [0,0,0] while the visible part is far away. Reported
+  // symptom: clicking a faucet handle parked the gizmo in the middle of the
+  // cabinet. The gizmo now parks at the mesh's bounding-box centre, and a
+  // drag pivots about the HANDLE, so these tests pin the math that makes an
+  // in-place rotation of an off-origin part stay in place.
+
+  it('rotation about the part CENTRE keeps the part centred (not orbiting)', () => {
+    // Part whose origin is the world origin but whose geometry centre is at
+    // [200, 0, 50] — the faucet-handle pattern.
+    const center: Vec3 = [200, 0, 50];
+    const spin = quatFromAxisAngle([0, 0, 1], Math.PI / 2);
+
+    // Gizmo parks at the visual centre; a rotate-only drag pivots there.
+    const move = clusterMoveFromDrag(null, WORLD_FRAME, center, center, spin);
+
+    // The ORIGIN of the part orbits the pivot...
+    const newOrigin = applyRigid(moveToRigid(move), [0, 0, 0]);
+    // ...but the geometry CENTRE must stay exactly where it was.
+    const newCenter = applyRigid(moveToRigid(move), center);
+    newCenter.forEach((v, i) => expect(v).toBeCloseTo(center[i], 8));
+    // Sanity: this is a real rotation, not identity.
+    expect(Math.hypot(newOrigin[0], newOrigin[1], newOrigin[2])).toBeGreaterThan(1);
+  });
+
+  it('rotating about the NODE ORIGIN would fling the part (the old bug)', () => {
+    // Documents why parking at getWorldPosition() was wrong: the same spin
+    // pivoted at the node origin moves the geometry centre 283mm away.
+    const center: Vec3 = [200, 0, 50];
+    const spin = quatFromAxisAngle([0, 0, 1], Math.PI / 2);
+    const move = clusterMoveFromDrag(null, WORLD_FRAME, [0, 0, 0], [0, 0, 0], spin);
+    const newCenter = applyRigid(moveToRigid(move), center);
+    const drift = Math.hypot(...newCenter.map((v, i) => v - center[i]));
+    expect(drift).toBeGreaterThan(200);
   });
 });
 
