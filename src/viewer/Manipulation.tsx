@@ -431,7 +431,7 @@ export function DragGizmo({ scene, assembly }: Props) {
   const previewFromHandle = useCallback((): Array<[string, Move]> | null => {
     const st = useStore.getState();
     if (!st.sequence) return null;
-    const policy = { snap: st.snap, axisLock: st.axisLock };
+    const policy = { snap: 0, axisLock: st.axisLock };
 
     const parts = selectableParts(st.sequence.assembly, selection);
     if (!parts.length) return null;

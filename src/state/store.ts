@@ -77,8 +77,6 @@ interface State {
   past: HistoryEntry[];
   future: HistoryEntry[];
   /** Direct-manipulation gizmo mode. 'off' hides it. */
-  /** Grid snap in mm for gizmo drags. 0 disables. */
-  snap: number;
   /** Collapse a near-axial drag onto its dominant axis. */
   axisLock: boolean;
   /** Click geometry in the viewport to select. */
@@ -101,7 +99,6 @@ interface Actions {
   clearSelection: () => void;
   /** Resolve a raw picked mesh id to a sensible selection unit, then select. */
   pickPart: (clickedId: string, opts?: { additive?: boolean; deep?: boolean }) => void;
-  setSnap: (mm: number) => void;
   setAxisLock: (v: boolean) => void;
   setPickEnabled: (v: boolean) => void;
   /**
@@ -177,6 +174,8 @@ interface Actions {
 
   /** Return all components to their original (rest) positions. */
   goHome: () => void;
+  /** Return the SELECTED parts to home by clearing their motion in the active step. */
+  goHomeSelection: () => void;
   undo: () => void;
   redo: () => void;
 }
@@ -210,7 +209,6 @@ export const useStore = create<State & Actions>()(
       warnings: [],
       past: [],
       future: [],
-      snap: 5,
       axisLock: true,
       pickEnabled: true,
       anchorMode: null,
@@ -268,7 +266,6 @@ export const useStore = create<State & Actions>()(
             : ids;
         }),
 
-      setSnap: (mm) => set((s) => void (s.snap = Math.max(0, mm))),
       setAxisLock: (v) => set((s) => void (s.axisLock = v)),
       setPickEnabled: (v) => set((s) => void (s.pickEnabled = v)),
 
@@ -291,7 +288,7 @@ export const useStore = create<State & Actions>()(
           node.restRotate,
           position,
           rotation,
-          { snap: state.snap, axisLock: state.axisLock },
+          { snap: 0, axisLock: state.axisLock },
           parentWorldTransform(sequence.assembly, partId),
         );
 
@@ -364,7 +361,7 @@ export const useStore = create<State & Actions>()(
         // at the world origin — rotating SUB_Cover scattered its bolt circle
         // because each bolt group spun about its own offset origin.
         const clusters = clusterByParentFrame(sequence.assembly, parts);
-        const policy = { snap: state.snap, axisLock: state.axisLock };
+        const policy = { snap: 0, axisLock: state.axisLock };
 
         // Snap/axis-lock the shared WORLD delta first — the only level where
         // shaping a rotating drag keeps the group rigid.
@@ -845,6 +842,34 @@ export const useStore = create<State & Actions>()(
           s.time = 0;
           s.playing = false;
         }),
+
+      /**
+       * Send the SELECTED parts home: remove their motion from the active
+       * step, so they render at the pose they had before this step touched
+       * them. Selection of a sub-assembly resolves to its meshes. Undoable.
+       */
+      goHomeSelection: () => {
+        const st = get();
+        const sequence = st.sequence;
+        const opId = st.activeOperationId;
+        if (!sequence || !opId || !st.selection.length) return;
+
+        const parts = selectableParts(sequence.assembly, st.selection);
+        if (!parts.length) return;
+
+        const op = sequence.operations.find((o) => o.id === opId);
+        if (!op || !op.tracks.some((t) => t.parts.some((p) => parts.includes(p)))) return;
+
+        checkpoint('Home selection');
+        set((s) => {
+          const target = findOp(s, opId);
+          if (!target) return;
+          for (const t of target.tracks) {
+            t.parts = t.parts.filter((p) => !parts.includes(p));
+          }
+          target.tracks = target.tracks.filter((t) => t.parts.length > 0);
+        });
+      },
 
       undo: () =>
         set((s) => {

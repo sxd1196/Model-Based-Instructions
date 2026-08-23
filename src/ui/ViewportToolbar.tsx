@@ -1,24 +1,32 @@
-/** Floating viewport toolbar: picking, snapping, and explode. */
+/** Floating viewport toolbar: picking, home, undo/redo, and explode. */
 import { useStore } from '@/state/store';
+import { selectableParts } from '@/domain/authoring';
 
 export function ViewportToolbar() {
   const sequence = useStore((s) => s.sequence);
-  const snap = useStore((s) => s.snap);
   const axisLock = useStore((s) => s.axisLock);
   const pickEnabled = useStore((s) => s.pickEnabled);
   const selection = useStore((s) => s.selection);
   const activeOperationId = useStore((s) => s.activeOperationId);
+  const canUndo = useStore((s) => s.past.length > 0);
+  const canRedo = useStore((s) => s.future.length > 0);
 
-  const setSnap = useStore((s) => s.setSnap);
   const setAxisLock = useStore((s) => s.setAxisLock);
   const setPickEnabled = useStore((s) => s.setPickEnabled);
   const explodeSelection = useStore((s) => s.explodeSelection);
+  const goHomeSelection = useStore((s) => s.goHomeSelection);
+  const undo = useStore((s) => s.undo);
+  const redo = useStore((s) => s.redo);
 
   if (!sequence) return null;
 
-  // No mode buttons: the gizmo carries translate arrows and rotate rings at
-  // once, and orbiting works whenever the pointer is not on a handle. Modes
-  // existed only to switch TransformControls' single-personality widget.
+  // Can the selection go home? Only if the active step actually moves it.
+  const op = sequence.operations.find((o) => o.id === activeOperationId);
+  const selectedMeshes = selectableParts(sequence.assembly, selection);
+  const canHome =
+    selectedMeshes.length > 0 &&
+    !!op?.tracks.some((t) => t.parts.some((p) => selectedMeshes.includes(p)));
+
   return (
     <div className="vp-toolbar">
       <div className="vp-group">
@@ -29,19 +37,6 @@ export function ViewportToolbar() {
         >
           ⬚ Pick
         </button>
-      </div>
-
-      <div className="vp-group">
-        <label title="Grid snap for drags">
-          snap
-          <select value={snap} onChange={(e) => setSnap(Number(e.target.value))}>
-            <option value={0}>off</option>
-            <option value={1}>1mm</option>
-            <option value={5}>5mm</option>
-            <option value={10}>10mm</option>
-            <option value={25}>25mm</option>
-          </select>
-        </label>
         <button
           className={axisLock ? 'on' : ''}
           onClick={() => setAxisLock(!axisLock)}
@@ -49,6 +44,18 @@ export function ViewportToolbar() {
         >
           axis
         </button>
+      </div>
+
+      <div className="vp-group">
+        <button
+          disabled={!canHome}
+          onClick={goHomeSelection}
+          title="Return the selected component or sub-assembly to its home position (removes its motion from this step)"
+        >
+          ⌂ Home
+        </button>
+        <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">↶</button>
+        <button onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">↷</button>
       </div>
 
       <div className="vp-group">

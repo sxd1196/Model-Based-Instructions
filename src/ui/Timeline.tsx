@@ -11,11 +11,6 @@ export function Timeline() {
   const activeId = useStore((s) => s.activeOperationId);
 
   const setTime = useStore((s) => s.setTime);
-  const goHome = useStore((s) => s.goHome);
-  const undo = useStore((s) => s.undo);
-  const redo = useStore((s) => s.redo);
-  const canUndo = useStore((s) => s.past.length > 0);
-  const canRedo = useStore((s) => s.future.length > 0);
   const togglePlay = useStore((s) => s.togglePlay);
   const setRate = useStore((s) => s.setPlaybackRate);
   const seekTo = useStore((s) => s.seekToOperation);
@@ -36,27 +31,7 @@ export function Timeline() {
         <button className="primary" onClick={togglePlay} title="Space">
           {playing ? '❚❚' : '▶'}
         </button>
-        <button
-          className="home-btn"
-          onClick={goHome}
-          title="Return every component to its original position (playhead to 0)"
-        >
-          ⌂ Home
-        </button>
-        <button
-          onClick={undo}
-          disabled={!canUndo}
-          title="Undo (Ctrl+Z)"
-        >
-          ↶
-        </button>
-        <button
-          onClick={redo}
-          disabled={!canRedo}
-          title="Redo (Ctrl+Shift+Z)"
-        >
-          ↷
-        </button>
+        <button onClick={() => setTime(0)} title="Playhead to start">⏮</button>
         <span className="time">
           {time.toFixed(2)}s / {total.toFixed(2)}s
         </span>

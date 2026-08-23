@@ -25,7 +25,7 @@ beforeEach(() => {
     sequence: null, selection: [], activeOperationId: null,
     time: 0, playing: false, playbackRate: 1, loading: false,
     warnings: [], past: [], future: [],
-    snap: 0, axisLock: false, pickEnabled: true,
+    axisLock: false, pickEnabled: true,
   });
   s().newFromAssembly(assembly);
 });
@@ -111,14 +111,8 @@ describe('commitDrag', () => {
     expect(s().sequence!.operations[0].tracks[0].to.translate[2]).toBeCloseTo(60);
   });
 
-  it('applies grid snapping', () => {
-    useStore.setState({ snap: 25 });
-    s().addOperation();
-    const part = idOf('Cover_Plate');
-    const rest = assembly.parts[part].restTranslate;
-    s().commitDrag(part, [rest[0], rest[1], rest[2] + 97.3], assembly.parts[part].restRotate);
-    expect(s().sequence!.operations[0].tracks[0].to.translate[2]).toBeCloseTo(100);
-  });
+  // DELETED: grid-snap drag tests — drag snap removed per user decision;
+  // exact values come from the typed motion panel instead.
 
   it('applies axis lock to clean up a sloppy drag', () => {
     useStore.setState({ axisLock: true });
@@ -231,7 +225,7 @@ describe('REGRESSION: rotation drags', () => {
     // defaulted the pivot to the world origin, so an in-place rotation
     // produced a huge translate, which axisLock then collapsed onto one axis
     // and snap quantized — corrupting the result beyond recognition.
-    useStore.setState({ snap: 5, axisLock: true });
+    useStore.setState({ axisLock: true });
 
     const part = idOf('Cover_Plate');
     const node = assembly.parts[part];
@@ -257,7 +251,7 @@ describe('REGRESSION: rotation drags', () => {
   });
 
   it('records the authored rotation accurately', () => {
-    useStore.setState({ snap: 5, axisLock: true });
+    useStore.setState({ axisLock: true });
 
     const part = idOf('Main_Shaft');
     const node = assembly.parts[part];
@@ -275,7 +269,7 @@ describe('REGRESSION: rotation drags', () => {
 
   it('does not snap or axis-lock the translate of a rotating drag', () => {
     // Quantizing the translate of a rotated transform breaks the result.
-    useStore.setState({ snap: 25, axisLock: true });
+    useStore.setState({ axisLock: true });
 
     const part = idOf('Cover_Plate');
     const node = assembly.parts[part];
@@ -326,12 +320,5 @@ describe('explodeSelection', () => {
   });
 });
 
-describe('gizmo settings', () => {
-  it('toggles mode and clamps snap to non-negative', () => {
-    
-    s().setSnap(-5);
-    expect(s().snap).toBe(0);
-    s().setSnap(10);
-    expect(s().snap).toBe(10);
-  });
-});
+// DELETED: 'gizmo settings' snap-clamp test — setSnap/snap removed with the
+// drag-snap feature (user decision: typed motion values replace grid snap).

@@ -26,7 +26,7 @@ beforeEach(() => {
     sequence: null, selection: [], activeOperationId: null,
     time: 0, playing: false, playbackRate: 1, loading: false,
     warnings: [], past: [], future: [],
-    snap: 0, axisLock: false, pickEnabled: true,
+    axisLock: false, pickEnabled: true,
   });
   s().newFromAssembly(assembly);
 });
@@ -135,23 +135,8 @@ describe('commitGroupDrag', () => {
     expect(track.parts.every((p) => !assembly.parts[p].isGroup)).toBe(true);
   });
 
-  it('applies snapping to a pure translation', () => {
-    useStore.setState({ snap: 25 });
-    s().addOperation();
-    s().commitGroupDrag(boltParts(), [0, 0, 0], [0, 0, 97], IDENTITY_QUAT);
-    expect(s().sequence!.operations[0].tracks[0].to.translate[2]).toBeCloseTo(100);
-  });
-
-  it('does NOT snap a rotating drag, which would break rigidity', () => {
-    useStore.setState({ snap: 25, axisLock: true });
-    s().addOperation();
-    const parts = boltParts();
-    s().commitGroupDrag(parts, [0, 0, 0], [3, 7, 97], quatFromAxisAngle([0, 0, 1], 0.6));
-
-    const t = s().sequence!.operations[0].tracks[0].to.translate;
-    // Untouched by snapping: not a multiple of 25 on every axis.
-    expect(t[0] % 25 === 0 && t[1] % 25 === 0 && t[2] % 25 === 0).toBe(false);
-  });
+  // DELETED: drag-snap tests — snap removed per user decision (typed
+  // motion values in the lanes panel replace grid snap).
 
   it('AUTO-CREATES a step when none exists rather than discarding the drag', () => {
     // Deliberately inverted from the original assertion — see the matching
@@ -337,6 +322,52 @@ describe('addMotionForParts / removePartFromLane (lane membership)', () => {
     s().undo();
     const restored = s().sequence!.operations[0].tracks.reduce((n, t) => n + t.parts.length, 0);
     expect(restored).toBe(total);
+  });
+});
+
+describe('goHomeSelection (per-component return to home)', () => {
+  it('clears the selected part motion; other parts keep theirs', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('Cover_Plate')] });
+    s().addMotionForSelection(opId);
+    useStore.setState({ selection: [idOf('Main_Shaft')] });
+    s().addMotionForSelection(opId);
+
+    useStore.setState({ selection: [idOf('Cover_Plate')] });
+    s().goHomeSelection();
+
+    const remaining = s().sequence!.operations[0].tracks.flatMap((t) => t.parts);
+    expect(remaining).toContain(idOf('Main_Shaft'));
+    expect(remaining).not.toContain(idOf('Cover_Plate'));
+  });
+
+  it('a sub-assembly selection homes every mesh in it', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('SUB_Cover')] });
+    s().addMotionForSelection(opId);
+    expect(s().sequence!.operations[0].tracks.length).toBeGreaterThan(0);
+
+    s().goHomeSelection();
+    expect(s().sequence!.operations[0].tracks).toHaveLength(0);
+  });
+
+  it('no-ops when the active step does not move the selection (no empty checkpoint)', () => {
+    s().addOperation();
+    useStore.setState({ selection: [idOf('Cover_Plate')] });
+    const pastBefore = useStore.getState().past.length;
+    s().goHomeSelection();
+    expect(useStore.getState().past.length).toBe(pastBefore);
+  });
+
+  it('is undoable in one step', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('SUB_Cover')] });
+    s().addMotionForSelection(opId);
+    const before = s().sequence!.operations[0].tracks.length;
+
+    s().goHomeSelection();
+    s().undo();
+    expect(s().sequence!.operations[0].tracks).toHaveLength(before);
   });
 });
 
