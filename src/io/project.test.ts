@@ -105,6 +105,45 @@ describe('buildInstructionsHtml', () => {
   });
 });
 
+describe('step images in the exported doc', () => {
+  const FAKE_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+
+  it('embeds an image for each step that has one', () => {
+    const html = buildInstructionsHtml(
+      seq([op({ id: 'a' }), op({ id: 'b' })]),
+      new Map([['a', FAKE_PNG], ['b', FAKE_PNG]]),
+    );
+    expect((html.match(/<img class="shot"/g) ?? [])).toHaveLength(2);
+    expect(html).toContain(FAKE_PNG);
+  });
+
+  it('omits the img tag for steps without an image', () => {
+    const html = buildInstructionsHtml(
+      seq([op({ id: 'a' }), op({ id: 'b' })]),
+      new Map([['a', FAKE_PNG]]),
+    );
+    expect((html.match(/<img class="shot"/g) ?? [])).toHaveLength(1);
+  });
+
+  it('produces a fully self-contained document', () => {
+    // Data URLs, not file references: a shop floor may be offline and the
+    // doc gets emailed around as a single file.
+    const html = buildInstructionsHtml(seq([op({ id: 'a' })]), new Map([['a', FAKE_PNG]]));
+    expect(html).not.toMatch(/<img[^>]+src="(?!data:)/);
+  });
+
+  it('works with no images at all (unchanged behaviour)', () => {
+    const html = buildInstructionsHtml(seq([op({ id: 'a', title: 'Step one' })]));
+    expect(html).toContain('Step one');
+    expect(html).not.toContain('<img');
+  });
+
+  it('gives images a print width so they do not overflow the page', () => {
+    const html = buildInstructionsHtml(seq([op({ id: 'a' })]), new Map([['a', FAKE_PNG]]));
+    expect(html).toMatch(/\.shot\{[^}]*max-width/);
+  });
+});
+
 describe('slug', () => {
   it('makes filesystem-safe names', () => {
     expect(slug('Gearbox Teardown v2')).toBe('gearbox-teardown-v2');

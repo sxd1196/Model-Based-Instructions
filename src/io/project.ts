@@ -25,13 +25,21 @@ export async function readSequenceFile(file: File): Promise<Sequence> {
  * Pure: returns a string and touches no DOM, so it is testable headlessly.
  * `exportInstructionsHtml` is the thin browser wrapper around it.
  */
-export function buildInstructionsHtml(sequence: Sequence): string {
+export function buildInstructionsHtml(
+  sequence: Sequence,
+  images: Map<string, string> = new Map(),
+): string {
   const timeline = buildTimeline(sequence);
   const rows = timeline
     .map(
       (e, i) => `
     <section class="step">
       <h2><span class="num">${i + 1}</span> ${escapeHtml(e.operation.title)}</h2>
+      ${
+        images.has(e.operation.id)
+          ? `<img class="shot" src="${images.get(e.operation.id)}" alt="Step ${i + 1}">`
+          : ''
+      }
       ${e.operation.description ? `<p>${escapeHtml(e.operation.description)}</p>` : ''}
       ${
         e.operation.annotations.length
@@ -67,6 +75,7 @@ export function buildInstructionsHtml(sequence: Sequence): string {
   h2{font-size:17px;margin:0 0 8px}
   dl{display:grid;grid-template-columns:110px 1fr;gap:4px 12px;margin:10px 0 0;font-size:13px}
   dt{color:#666}dd{margin:0}
+  .shot{width:100%;max-width:640px;border:1px solid #ddd;border-radius:4px;margin:10px 0;display:block}
   @media print{.step{border-color:#999}}
 </style></head>
 <body>
@@ -77,8 +86,11 @@ export function buildInstructionsHtml(sequence: Sequence): string {
 </body></html>`;
 }
 
-export function exportInstructionsHtml(sequence: Sequence) {
-  const html = buildInstructionsHtml(sequence);
+export function exportInstructionsHtml(
+  sequence: Sequence,
+  images: Map<string, string> = new Map(),
+) {
+  const html = buildInstructionsHtml(sequence, images);
   triggerDownload(new Blob([html], { type: 'text/html' }), `${slug(sequence.name)}-instructions.html`);
 }
 

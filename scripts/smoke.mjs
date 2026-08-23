@@ -211,6 +211,43 @@ try {
     await shot('08-step-import');
   }
 
+  // ---------------------------------------------------------------- export
+  // Reload the demo (the STEP import replaced it), author a step, then export
+  // and verify the doc really contains a rendered image — offscreen WebGL is
+  // exactly the kind of thing that silently yields a blank canvas.
+  await page.getByRole('button', { name: /demo model/i }).click();
+  await page.waitForTimeout(2500);
+  await page.mouse.click(cx, cy);
+  await page.waitForTimeout(400);
+  await page.getByRole('button', { name: /\+ Step/i }).click();
+  await page.waitForTimeout(400);
+
+  const exportedHtml = await page.evaluate(async () => {
+    // Intercept at Blob construction: the app revokes the object URL shortly
+    // after the click, so fetching it later races and fails.
+    const RealBlob = window.Blob;
+    let captured = null;
+    // eslint-disable-next-line no-global-assign
+    window.Blob = function (parts, options) {
+      const blob = new RealBlob(parts, options);
+      if (options && options.type === 'text/html') captured = blob;
+      return blob;
+    };
+    window.Blob.prototype = RealBlob.prototype;
+
+    const btn = [...document.querySelectorAll('button')]
+      .find((b) => /export doc/i.test(b.textContent ?? ''));
+    btn?.click();
+    await new Promise((r) => setTimeout(r, 8000));
+    window.Blob = RealBlob;
+
+    return captured ? await captured.text() : '';
+  });
+
+  const hasImage = /<img class="shot" src="data:image\/png;base64,[A-Za-z0-9+/=]{500,}/.test(exportedHtml);
+  record('exported doc contains a RENDERED step image', hasImage,
+    hasImage ? 'png data url present' : `html length ${exportedHtml.length}`);
+
   // ---------------------------------------------------------------- errors
   record('no console errors', consoleErrors.length === 0,
     consoleErrors.slice(0, 3).join(' | ') || 'clean');

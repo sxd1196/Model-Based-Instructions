@@ -16,6 +16,7 @@ import {
   recordCanvas,
 } from '@/io/project';
 import { openProjectJson } from '@/io/bundle';
+import { captureStepImages } from '@/cad/captureSteps';
 import { makeDemoAssembly } from '@/cad/demo';
 import './App.css';
 
@@ -194,6 +195,35 @@ export default function App() {
     };
   }, [openModel, openProject]);
 
+  const exportDoc = useCallback(async () => {
+    if (!sequence) return;
+    setLoading(true);
+    try {
+      const images = new Map<string, string>();
+
+      if (scene && sequence.operations.length) {
+        setWarnings([`Rendering ${sequence.operations.length} step image(s)…`]);
+        const shots = await captureStepImages(sequence, scene, {
+          homeCamera: sequence.homeCamera,
+        });
+        for (const shot of shots) images.set(shot.operationId, shot.dataUrl);
+      }
+
+      exportInstructionsHtml(sequence, images);
+      setWarnings([
+        images.size
+          ? `Exported with ${images.size} step image(s). Print to PDF from the browser.`
+          : 'Exported. Add steps to include step images.',
+      ]);
+    } catch (err) {
+      // Never lose the document over a failed render — ship it text-only.
+      exportInstructionsHtml(sequence);
+      setWarnings([`Exported without images: ${(err as Error).message}`]);
+    } finally {
+      setLoading(false);
+    }
+  }, [sequence, scene, setWarnings, setLoading]);
+
   const toggleRecord = () => {
     if (recording) {
       stopRecording.current?.();
@@ -239,7 +269,7 @@ export default function App() {
         <button className="btn" disabled={!sequence} onClick={saveProject}>
           Save
         </button>
-        <button className="btn" disabled={!sequence} onClick={() => sequence && exportInstructionsHtml(sequence)}>
+        <button className="btn" disabled={!sequence} onClick={exportDoc}>
           Export doc
         </button>
         <button className={`btn${recording ? ' rec' : ''}`} disabled={!sequence} onClick={toggleRecord}>
