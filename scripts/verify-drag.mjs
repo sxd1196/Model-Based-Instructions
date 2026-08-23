@@ -78,6 +78,7 @@ await page.waitForTimeout(600);
 
 const beforeSig = await canvasSignature();
 await page.screenshot({ path: '.smoke/fix-01-before.png' });
+await page.locator('.vp-toolbar, .viewport-toolbar').first().screenshot({ path: '.smoke/fix-00-toolbar.png' }).catch(() => {});
 
 const dragInfo = await page.evaluate(() => {
   const st = window.__store.getState();
@@ -108,7 +109,8 @@ check('translate: THE PART VISIBLY MOVED without pressing play',
   moved > 8, `${moved} grid cells changed`);
 
 // ---------------------------------------------------------------- BUG 2
-await page.locator('button[title="Gizmo: rotate"]').click();
+// Title now carries a description, so match on the prefix.
+await page.locator('button[title^="Gizmo: rotate"]').click();
 await page.waitForTimeout(400);
 const mode = await page.evaluate(() => window.__store.getState().gizmo);
 check('rotate: toolbar switches the gizmo to rotate', mode === 'rotate', mode);
@@ -151,6 +153,46 @@ check('rotate: the part visibly rotated', differing(beforeRot, afterRot) > 4,
   `${differing(beforeRot, afterRot)} grid cells changed`);
 
 check('no console errors', errors.length === 0, errors.slice(0, 2).join(' | ') || 'clean');
+
+// ---------------------------------------------------------------- BUG 3
+// Reported: after a commit the gizmo sat in empty space while the part was
+// elsewhere. The handle was positioned once on selection change, but
+// SceneBinder rewrites part transforms every frame, so any pose change
+// stranded it. Measures the gap between the handle and the part it controls.
+const handleGap = () => page.evaluate(() => {
+  const p = window.__gizmoProbe;
+  if (!p?.handle || !p?.target) return null;
+  return Math.hypot(
+    p.handle[0] - p.target[0],
+    p.handle[1] - p.target[1],
+    p.handle[2] - p.target[2],
+  );
+});
+
+// Drive the exact sequence from the report: select, commit, measure the gap.
+await page.evaluate(() => {
+  const st = window.__store.getState();
+  const p = Object.values(st.sequence.assembly.parts).find((x) => x.name === 'Main_Shaft');
+  st.pickPart(p.id, {});
+});
+await page.waitForTimeout(600);
+const gapBefore = await handleGap();
+
+await page.evaluate(() => {
+  const st = window.__store.getState();
+  const p = Object.values(st.sequence.assembly.parts).find((x) => x.name === 'Main_Shaft');
+  const r = p.restTranslate;
+  st.commitDrag(p.id, [r[0] + 200, r[1], r[2]], p.restRotate);
+});
+await page.waitForTimeout(900);
+await page.screenshot({ path: '.smoke/fix-04-handle-tracks.png' });
+const gapAfter = await handleGap();
+
+check('gizmo probe is reachable', gapBefore !== null && gapAfter !== null,
+  `before=${gapBefore} after=${gapAfter}`);
+check('GIZMO HANDLE STAYS ON THE PART after a commit',
+  gapAfter !== null && gapAfter < 5,
+  `gap ${gapBefore?.toFixed(2)}mm -> ${gapAfter?.toFixed(2)}mm`);
 
 await browser.close();
 

@@ -32,14 +32,19 @@ export function ViewportToolbar() {
       </div>
 
       <div className="vp-group">
-        {(['off', 'translate', 'rotate'] as const).map((m) => (
+        {([
+          ['off', '✋', 'Look', 'Orbit only — no dragging'],
+          ['translate', '✥', 'Move', 'Drag the arrows to move parts'],
+          ['rotate', '⟳', 'Rotate', 'Drag the rings to rotate parts'],
+        ] as const).map(([m, glyph, label, tip]) => (
           <button
             key={m}
-            className={gizmo === m ? 'on' : ''}
+            className={`vp-mode ${gizmo === m ? 'on' : ''}`}
             onClick={() => setGizmo(m)}
-            title={`Gizmo: ${m}`}
+            title={`Gizmo: ${m} — ${tip}`}
           >
-            {m === 'off' ? '✋' : m === 'translate' ? '✥' : '⟳'}
+            <span className="vp-glyph">{glyph}</span>
+            <span className="vp-label">{label}</span>
           </button>
         ))}
       </div>

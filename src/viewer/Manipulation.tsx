@@ -5,7 +5,7 @@
  * events into those calls. Keep it that way — logic here is untestable.
  */
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useThree } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '@/state/store';
@@ -163,6 +163,10 @@ function snapHitToFeature(hit: THREE.Intersection): {
  *  - many parts -> commitGroupDrag, composing a RIGID transform from the
  *    gizmo's start/end so the group keeps its internal geometry
  */
+// Module-level scratch: useFrame must not allocate (AGENTS.md §7).
+const _acc = new THREE.Vector3();
+const _scratch = new THREE.Vector3();
+
 export function DragGizmo({ scene, assembly }: Props) {
   const selection = useStore((s) => s.selection);
   const gizmo = useStore((s) => s.gizmo);
@@ -172,6 +176,7 @@ export function DragGizmo({ scene, assembly }: Props) {
 
   const proxy = useRef<THREE.Object3D>(new THREE.Object3D());
   const dragStart = useRef<THREE.Vector3>(new THREE.Vector3());
+  const dragging = useRef(false);
 
   const index = useMemo(
     () => (scene && assembly ? indexScene(scene, assembly) : new Map()),
@@ -183,13 +188,28 @@ export function DragGizmo({ scene, assembly }: Props) {
   const target = targetId ? index.get(targetId) : null;
 
   /**
-   * Park the proxy: on the part for a single selection, at the selection's
-   * centroid for a group. A centroid handle is what makes a group drag feel
-   * like grabbing the whole thing rather than one arbitrary member.
+   * Keep the gizmo handle welded to what it controls.
+   *
+   * This runs every frame rather than on selection change alone. SceneBinder
+   * rewrites part transforms on every frame from the evaluator, so ANY change
+   * to the resolved pose — committing a drag, scrubbing, undo, playback —
+   * moves the part out from under a handle that was positioned once. That is
+   * how the gizmo ends up stranded in empty space while the part sits
+   * elsewhere.
+   *
+   * Skipped while dragging: TransformControls owns the proxy then, and
+   * writing to it mid-drag fights the user's mouse.
    */
-  useEffect(() => {
+  useFrame(() => {
+    if (import.meta.env.DEV && typeof window !== 'undefined') {
+      // Dev-only probe so headless checks can measure handle-vs-part drift.
+      (window as unknown as { __gizmoProbe?: unknown }).__gizmoProbe = {
+        handle: proxy.current.position.toArray(),
+        target: target ? target.getWorldPosition(_scratch).toArray() : null,
+      };
+    }
+    if (dragging.current) return;
     const p = proxy.current;
-    p.quaternion.set(0, 0, 0, 1);
 
     if (target) {
       target.getWorldPosition(p.position);
@@ -198,25 +218,35 @@ export function DragGizmo({ scene, assembly }: Props) {
     }
 
     if (!isGroup) return;
-    const acc = new THREE.Vector3();
-    const scratch = new THREE.Vector3();
+
+    // Group handle sits at the selection centroid, so a drag feels like
+    // grabbing the whole thing rather than one arbitrary member.
+    _acc.set(0, 0, 0);
     let n = 0;
     for (const id of selection) {
       const obj = index.get(id);
       if (!obj) continue;
-      obj.getWorldPosition(scratch);
-      acc.add(scratch);
+      obj.getWorldPosition(_scratch);
+      _acc.add(_scratch);
       n++;
     }
-    if (n > 0) p.position.copy(acc.divideScalar(n));
-  }, [target, targetId, isGroup, selection, index]);
+    if (n > 0) p.position.copy(_acc.divideScalar(n));
+  });
+
+  // Reset the handle's orientation when the selection changes; a group drag
+  // composes from an identity handle.
+  useEffect(() => {
+    proxy.current.quaternion.set(0, 0, 0, 1);
+  }, [targetId, isGroup]);
 
   const onMouseDown = useCallback(() => {
     pause();
+    dragging.current = true;
     dragStart.current.copy(proxy.current.position);
   }, [pause]);
 
   const onMouseUp = useCallback(() => {
+    dragging.current = false;
     const p = proxy.current;
     const rotation: [number, number, number, number] = [
       p.quaternion.x, p.quaternion.y, p.quaternion.z, p.quaternion.w,

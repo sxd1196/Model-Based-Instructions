@@ -231,6 +231,14 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .vp-group select { padding: 2px 4px; font-size: 11px; }
 .vp-hint { font-size: 11px; color: var(--muted); padding-left: 10px; border-left: 1px solid var(--line); }
 
+.vp-mode {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 3px 9px; line-height: 1.1; min-width: 44px;
+}
+.vp-glyph { font-size: 13px; }
+.vp-label { font-size: 9px; letter-spacing: .3px; text-transform: uppercase; opacity: .75; }
+.vp-mode.on .vp-label { opacity: 1; }
+
 /* ---------- drag and drop ---------- */
 .app.drag-over::after {
   content: ''; position: fixed; inset: 0; z-index: 900;
