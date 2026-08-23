@@ -18,6 +18,7 @@ import type {
   PartStyle,
   Quat,
   Sequence,
+  Track,
   Vec3,
 } from './schema';
 import { IDENTITY_MOVE, IDENTITY_QUAT, ZERO_VEC } from './schema';
@@ -213,13 +214,52 @@ function applyOperation(
     for (const partId of style.parts) styles.set(partId, style.mode);
   }
 
+  // Group tracks by the part they drive so several motions on ONE part can
+  // CHAIN (lift, then slide) instead of fighting last-write-wins. Keyed by
+  // part rather than track: a part may appear on multiple tracks, and each
+  // part's chain is independent.
+  const byPart = new Map<string, Track[]>();
   for (const track of operation.tracks) {
-    // Map the operation-level progress onto this track's [start,end] window.
-    const span = track.end - track.start;
-    const raw = span <= 0 ? (opT >= track.end ? 1 : 0) : (opT - track.start) / span;
-    const eased = applyEasing(track.easing, clamp01(raw));
-    const move = lerpMove(track.from, track.to, eased);
-    for (const partId of track.parts) poses.set(partId, move);
+    for (const partId of track.parts) {
+      const list = byPart.get(partId);
+      if (list) list.push(track);
+      else byPart.set(partId, [track]);
+    }
+  }
+
+  for (const [partId, tracks] of byPart) {
+    if (tracks.length > 1) {
+      // Chain by START fraction, not array order — authors reorder lanes.
+      tracks.sort((a, b) => a.start - b.start || a.end - b.end);
+    }
+
+    let pose: Move | null = null;
+    for (let i = 0; i < tracks.length; i++) {
+      const track = tracks[i];
+      // Leg i starts from the previous leg's END pose (implicit chaining).
+      // The stored `from` only seeds the first leg; deriving later `from`s
+      // instead of trusting stored ones means editing an earlier leg
+      // re-bases everything after it, which is what an author expects.
+      const from = i === 0 ? track.from : tracks[i - 1].to;
+
+      const span = track.end - track.start;
+      const raw = span <= 0 ? (opT >= track.end ? 1 : 0) : (opT - track.start) / span;
+
+      if (raw <= 0) {
+        // Not reached yet. The FIRST leg still honours its stored `from`
+        // (identical to pre-chaining behaviour for single-track parts);
+        // later legs hold whatever the chain has produced so far. Never
+        // write an identity over earlier legs — that was the
+        // last-write-wins bug.
+        if (i === 0) pose = lerpMove(from, track.to, applyEasing(track.easing, 0));
+        break;
+      }
+
+      const eased = applyEasing(track.easing, clamp01(raw));
+      pose = lerpMove(from, track.to, eased);
+    }
+
+    if (pose) poses.set(partId, pose);
   }
 }
 
