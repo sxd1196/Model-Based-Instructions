@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "postinstall": "node scripts/sync-wasm.mjs",
     "prebuild": "node scripts/sync-wasm.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "verify:drag": "node scripts/verify-drag.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",

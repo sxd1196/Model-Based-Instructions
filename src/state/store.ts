@@ -130,6 +130,8 @@ interface Actions {
   togglePlay: () => void;
   setPlaybackRate: (r: number) => void;
   seekToOperation: (id: string) => void;
+  /** Park the playhead at an operation MOTION end, so its result is visible. */
+  parkAtOperationEnd: (id: string) => void;
 
   addOperation: (partial?: Partial<Operation>) => string | null;
   updateOperation: (id: string, patch: Partial<Operation>) => void;
@@ -264,37 +266,49 @@ export const useStore = create<State & Actions>()(
         const sequence = state.sequence;
         if (!sequence) return;
 
+        const node = sequence.assembly.parts[partId];
+        if (!node) return;
+
+        // Pivot at the part's REST POSITION, not the world origin. A rotate
+        // gizmo leaves the handle in place, so an origin pivot turns a pure
+        // spin into a large translate — which axis lock then flattens onto
+        // one axis and snap quantizes, flinging the part across the scene.
+        let move: Move = moveFromDrag(
+          node.restTranslate,
+          node.restRotate,
+          position,
+          rotation,
+          node.restTranslate,
+        );
+
+        // Snap and axis lock are translation aids; applying them to a rotated
+        // transform corrupts the result. Skip them when a rotation is present.
+        const rotated = Math.abs(Math.abs(move.rotate[3]) - 1) > 1e-6;
+        if (!rotated) {
+          if (state.axisLock) {
+            move = { ...move, translate: constrainToDominantAxis(move.translate) };
+          }
+          if (state.snap > 0) {
+            move = { ...move, translate: snapTranslate(move.translate, state.snap) };
+          }
+        }
+
+        // A drag that ends where it started should not create a dead track —
+        // nor an empty step. Bail BEFORE auto-creating an operation.
+        const existing = state.activeOperationId
+          ? sequence.operations
+              .find((o) => o.id === state.activeOperationId)
+              ?.tracks.find((t) => t.parts.includes(partId))
+          : undefined;
+
+        if (isIdentityMove(move) && !existing) return;
+
         // Auto-create a step rather than silently discarding the drag. The
         // gizmo is visible whenever a part is selected, so a user can drag
         // before ever clicking "+ Step"; that must do something sensible.
         let opId = state.activeOperationId;
         if (!opId) opId = get().addOperation() ?? null;
         if (!opId) return;
-
-        const node = sequence.assembly.parts[partId];
-        if (!node) return;
-
-        // Invert the pose composition to recover the authored delta.
-        let move: Move = moveFromDrag(
-          node.restTranslate,
-          node.restRotate,
-          position,
-          rotation,
-        );
-
-        if (state.axisLock) {
-          move = { ...move, translate: constrainToDominantAxis(move.translate) };
-        }
-        if (state.snap > 0) {
-          move = { ...move, translate: snapTranslate(move.translate, state.snap) };
-        }
-
-        // A drag that ends where it started should not create a dead track.
-        const existing = sequence.operations
-          .find((o) => o.id === opId)
-          ?.tracks.find((t) => t.parts.includes(partId));
-
-        if (isIdentityMove(move) && !existing) return;
 
         checkpoint('Drag part');
         set((s) => {
@@ -315,6 +329,13 @@ export const useStore = create<State & Actions>()(
             });
           }
         });
+
+        // Park the playhead at this step's end state. Without it the part
+        // snaps back to rest the instant you release the gizmo: a new track
+        // runs IDENTITY -> dragged, and at time 0 the evaluator correctly
+        // renders IDENTITY while the gizmo sits where you dropped it. You
+        // author the end pose, so that is what the viewport should show.
+        get().parkAtOperationEnd(opId);
       },
 
       commitGroupDrag: (partIds, gizmoStart, gizmoEnd, gizmoRotation) => {
@@ -381,6 +402,9 @@ export const useStore = create<State & Actions>()(
             });
           }
         });
+
+        // See commitDrag: show the authored end state, not the rest pose.
+        get().parkAtOperationEnd(opId);
       },
 
       selectSubassemblyOf: (partId, additive = false) =>
@@ -449,6 +473,22 @@ export const useStore = create<State & Actions>()(
             if (op.id === id) break;
             cursor += op.duration + op.dwell;
           }
+          s.time = cursor;
+          s.activeOperationId = id;
+          s.playing = false;
+        }),
+
+      parkAtOperationEnd: (id) =>
+        set((s) => {
+          if (!s.sequence) return;
+          let cursor = 0;
+          for (const op of s.sequence.operations) {
+            cursor += op.duration;
+            if (op.id === id) break;
+            cursor += op.dwell;
+          }
+          // Motion end, not step end: the dwell holds the same pose, and
+          // landing on the boundary would read as the NEXT step's start.
           s.time = cursor;
           s.activeOperationId = id;
           s.playing = false;
@@ -648,3 +688,9 @@ export const useStore = create<State & Actions>()(
     };
   }),
 );
+
+// Expose the store for headless browser verification (scripts/smoke.mjs).
+// Dev-only: production builds must not carry a global mutation handle.
+if (import.meta.env?.DEV && typeof window !== 'undefined') {
+  (window as unknown as { __store: typeof useStore }).__store = useStore;
+}

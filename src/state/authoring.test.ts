@@ -10,7 +10,7 @@ import { buildAssemblyFromScene } from '@/cad/loadGltf';
 import { makeDemoAssembly } from '@/cad/demo';
 import { poseFor, resolveFrame } from '@/domain/evaluate';
 import { composePartTransform, quatFromAxisAngle } from '@/domain/transform';
-import type { Vec3 } from '@/domain/schema';
+import { IDENTITY_QUAT, type Vec3 } from '@/domain/schema';
 
 const { root, name } = makeDemoAssembly();
 const { assembly } = buildAssemblyFromScene(root, 'demo://x', { name });
@@ -172,6 +172,124 @@ describe('commitDrag', () => {
       s().commitDrag(p, [r[0], r[1], r[2] + 40], assembly.parts[p].restRotate);
     }
     expect(s().sequence!.operations[0].tracks).toHaveLength(2);
+  });
+});
+
+describe('REGRESSION: authored motion is visible immediately', () => {
+  it('parks the playhead at the end of the drag so the part MOVES', () => {
+    // Reported bug: on a freshly loaded app the gizmo moved but the part
+    // stayed put, until you played the step. Cause: newFromAssembly leaves
+    // time=0, and a new track runs IDENTITY -> dragged, so resolveFrame(0)
+    // renders the part at rest while the gizmo sits where it was dropped.
+    const part = idOf('Cover_Plate');
+    const rest = assembly.parts[part].restTranslate;
+
+    expect(s().time).toBe(0);
+    s().commitDrag(part, [rest[0], rest[1], rest[2] + 90], assembly.parts[part].restRotate);
+
+    // The playhead must land where the motion is complete.
+    expect(s().time).toBeGreaterThan(0);
+
+    const frame = resolveFrame(s().sequence!, s().time);
+    expect(poseFor(frame, part).translate[2]).toBeCloseTo(90);
+  });
+
+  it('a second drag on the same part is also immediately visible', () => {
+    const part = idOf('Cover_Plate');
+    const rest = assembly.parts[part].restTranslate;
+    const q = assembly.parts[part].restRotate;
+
+    s().commitDrag(part, [rest[0], rest[1], rest[2] + 40], q);
+    s().commitDrag(part, [rest[0], rest[1], rest[2] + 120], q);
+
+    const frame = resolveFrame(s().sequence!, s().time);
+    expect(poseFor(frame, part).translate[2]).toBeCloseTo(120);
+  });
+
+  it('a group drag is immediately visible too', () => {
+    const bolts = Object.values(assembly.parts)
+      .filter((p) => /^Bolt_M8_\d+_(Shank|Head)$/.test(p.name))
+      .map((p) => p.id);
+
+    s().commitGroupDrag(bolts, [0, 0, 0], [0, 0, 75], IDENTITY_QUAT);
+
+    const frame = resolveFrame(s().sequence!, s().time);
+    expect(poseFor(frame, bolts[0]).translate[2]).toBeCloseTo(75);
+  });
+
+  it('does not move the playhead when the drag is rejected as a no-op', () => {
+    const part = idOf('Cover_Plate');
+    s().commitDrag(part, assembly.parts[part].restTranslate, assembly.parts[part].restRotate);
+    expect(s().time).toBe(0);
+    expect(s().sequence!.operations).toHaveLength(0);
+  });
+});
+
+describe('REGRESSION: rotation drags', () => {
+  it('rotating in place does NOT fling the part across the scene', () => {
+    // Reported bug: the rotate rings did nothing usable. Cause: moveFromDrag
+    // defaulted the pivot to the world origin, so an in-place rotation
+    // produced a huge translate, which axisLock then collapsed onto one axis
+    // and snap quantized — corrupting the result beyond recognition.
+    useStore.setState({ snap: 5, axisLock: true, gizmo: 'rotate' });
+
+    const part = idOf('Cover_Plate');
+    const node = assembly.parts[part];
+    const spin = quatFromAxisAngle([0, 0, 1], Math.PI / 4);
+
+    // A rotate-only gizmo drag leaves the handle where it was.
+    const posed = composePartTransform(node.restTranslate, node.restRotate, {
+      translate: [0, 0, 0], rotate: spin, pivot: node.restTranslate,
+    });
+    s().commitDrag(part, posed.position, posed.rotation);
+
+    const frame = resolveFrame(s().sequence!, s().time);
+    const move = poseFor(frame, part);
+
+    // The part must end up where the gizmo left it, not somewhere else.
+    const final = composePartTransform(node.restTranslate, node.restRotate, move);
+    const drift = Math.hypot(
+      final.position[0] - posed.position[0],
+      final.position[1] - posed.position[1],
+      final.position[2] - posed.position[2],
+    );
+    expect(drift).toBeLessThan(1);
+  });
+
+  it('records the authored rotation accurately', () => {
+    useStore.setState({ snap: 5, axisLock: true, gizmo: 'rotate' });
+
+    const part = idOf('Main_Shaft');
+    const node = assembly.parts[part];
+    const spin = quatFromAxisAngle([0, 1, 0], Math.PI / 3);
+
+    const posed = composePartTransform(node.restTranslate, node.restRotate, {
+      translate: [0, 0, 0], rotate: spin, pivot: node.restTranslate,
+    });
+    s().commitDrag(part, posed.position, posed.rotation);
+
+    const stored = s().sequence!.operations[0].tracks[0].to.rotate;
+    const dot = Math.abs(stored.reduce((acc, v, i) => acc + v * spin[i], 0));
+    expect(dot).toBeCloseTo(1, 4);
+  });
+
+  it('does not snap or axis-lock the translate of a rotating drag', () => {
+    // Quantizing the translate of a rotated transform breaks the result.
+    useStore.setState({ snap: 25, axisLock: true, gizmo: 'rotate' });
+
+    const part = idOf('Cover_Plate');
+    const node = assembly.parts[part];
+    const spin = quatFromAxisAngle([1, 0, 0], 0.7);
+
+    const posed = composePartTransform(node.restTranslate, node.restRotate, {
+      translate: [3, 7, 11], rotate: spin, pivot: node.restTranslate,
+    });
+    s().commitDrag(part, posed.position, posed.rotation);
+
+    const t = s().sequence!.operations[0].tracks[0].to.translate;
+    const allMultiples =
+      t.every((n) => Math.abs(n % 25) < 1e-6);
+    expect(allMultiples).toBe(false);
   });
 });
 
