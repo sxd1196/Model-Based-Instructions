@@ -15,6 +15,7 @@ import {
   clusterByParentFrame,
   resolveGizmoState,
   selectableParts,
+  shapeDragWorld,
 } from '@/domain/authoring';
 import { clusterMoveFromDrag } from '@/domain/rigid';
 import { beginPreview, endPreview, updatePreview } from './dragPreview';
@@ -445,6 +446,8 @@ export function DragGizmo({ scene, assembly }: Props) {
     ];
 
     const out: Array<[string, Move]> = [];
+    // Same world-level shaping as commitGroupDrag — preview == commit.
+    const shapedEnd = shapeDragWorld(gStart, gEnd, gRot, policy);
     for (const cluster of clusterByParentFrame(st.sequence.assembly, parts)) {
       const existing = op?.tracks.find(
         (t) =>
@@ -452,7 +455,7 @@ export function DragGizmo({ scene, assembly }: Props) {
           t.parts.every((p) => cluster.parts.includes(p)),
       );
       const move = applyDragPolicy(
-        clusterMoveFromDrag(existing?.to ?? null, cluster.frame, gStart, gEnd, gRot),
+        clusterMoveFromDrag(existing?.to ?? null, cluster.frame, gStart, shapedEnd, gRot),
         policy,
       );
       for (const id of cluster.parts) out.push([id, move]);

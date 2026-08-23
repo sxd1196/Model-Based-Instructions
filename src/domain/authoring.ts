@@ -174,9 +174,12 @@ export interface DragPolicy {
 /**
  * Post-process a raw drag Move with snap and axis lock.
  *
- * Skipped entirely when the drag carries rotation: snap and axis lock are
- * translation aids, and quantizing the translate of a rotated transform
- * corrupts the result (the original rotate-fling bug).
+ * Skipped entirely when the drag carries rotation: this operates on a
+ * PER-CLUSTER move, and quantizing each cluster's rotation-induced translate
+ * independently would scatter a rigid group (each cluster rounds
+ * differently). Rotating drags get their snap at the WORLD level instead —
+ * see shapeDragWorld, which shapes the shared gizmo delta BEFORE it is
+ * distributed to clusters.
  *
  * SINGLE SOURCE OF TRUTH for drag shaping — the live preview during a drag
  * and the committed move on release both call this, which is what guarantees
@@ -280,6 +283,39 @@ export interface GizmoState {
   reason: string | null;
   /** True when the drag will move several parts rigidly. */
   isGroup: boolean;
+}
+
+/**
+ * Shape the WORLD-LEVEL gizmo delta with snap and axis lock, before it is
+ * distributed to parent clusters.
+ *
+ * This is where snap applies to EVERY drag, rotating or not: the gizmo's
+ * world translation is one shared vector, so quantizing it here shifts the
+ * whole group uniformly and rigidity is preserved exactly. (Per-cluster
+ * snapping of a rotating drag would scatter the group — see
+ * applyDragPolicy.) Axis lock still only applies to pure translations:
+ * clamping the translation of a rotation about an off-origin pivot would
+ * corrupt the motion the user actually made.
+ */
+export function shapeDragWorld(
+  gizmoStart: Vec3,
+  gizmoEnd: Vec3,
+  rotation: Quat,
+  policy: DragPolicy,
+): Vec3 {
+  const rotated = Math.abs(Math.abs(rotation[3]) - 1) > 1e-6;
+  let delta: Vec3 = [
+    gizmoEnd[0] - gizmoStart[0],
+    gizmoEnd[1] - gizmoStart[1],
+    gizmoEnd[2] - gizmoStart[2],
+  ];
+  if (policy.axisLock && !rotated) delta = constrainToDominantAxis(delta);
+  if (policy.snap > 0) delta = snapTranslate(delta, policy.snap);
+  return [
+    gizmoStart[0] + delta[0],
+    gizmoStart[1] + delta[1],
+    gizmoStart[2] + delta[2],
+  ];
 }
 
 /**

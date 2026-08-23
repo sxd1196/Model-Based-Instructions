@@ -38,6 +38,7 @@ import {
   radialExplode,
   resolveSelectionTarget,
   selectableParts,
+  shapeDragWorld,
 } from '@/domain/authoring';
 import { clusterMoveFromDrag } from '@/domain/rigid';
 
@@ -174,6 +175,8 @@ interface Actions {
   ) => void;
   setStyle: (operationId: string, style: PartStyle) => void;
 
+  /** Return all components to their original (rest) positions. */
+  goHome: () => void;
   undo: () => void;
   redo: () => void;
 }
@@ -363,6 +366,10 @@ export const useStore = create<State & Actions>()(
         const clusters = clusterByParentFrame(sequence.assembly, parts);
         const policy = { snap: state.snap, axisLock: state.axisLock };
 
+        // Snap/axis-lock the shared WORLD delta first — the only level where
+        // shaping a rotating drag keeps the group rigid.
+        const shapedEnd = shapeDragWorld(gizmoStart, gizmoEnd, gizmoRotation, policy);
+
         const updates: Array<{ parts: string[]; move: Move }> = [];
         for (const cluster of clusters) {
           const existing = opForLookup?.tracks.find(
@@ -375,7 +382,7 @@ export const useStore = create<State & Actions>()(
               existing?.to ?? null,
               cluster.frame,
               gizmoStart,
-              gizmoEnd,
+              shapedEnd,
               gizmoRotation,
             ),
             policy,
@@ -829,12 +836,29 @@ export const useStore = create<State & Actions>()(
         });
       },
 
+      /**
+       * Return every component to its original position: rest pose = the
+       * authored home. Deltas-from-rest means home is simply t=0, paused.
+       */
+      goHome: () =>
+        set((s) => {
+          s.time = 0;
+          s.playing = false;
+        }),
+
       undo: () =>
         set((s) => {
           const prev = s.past.pop();
           if (!prev || !s.sequence) return;
           s.future.push({ sequence: JSON.parse(JSON.stringify(s.sequence)), label: prev.label });
           s.sequence = prev.sequence;
+          // The playhead may sit beyond the restored document's duration
+          // (undoing the drag that parked it there). Clamp so the undone
+          // state is VISIBLE — an out-of-range playhead renders the final
+          // frame and makes undo look like it did nothing.
+          const total = prev.sequence.operations.reduce(
+            (n, o) => n + o.duration + o.dwell, 0);
+          if (s.time > total) s.time = total;
         }),
 
       redo: () =>

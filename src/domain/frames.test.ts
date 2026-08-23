@@ -13,6 +13,7 @@ import {
   clusterByParentFrame,
   parentWorldTransform,
   selectableParts,
+  shapeDragWorld,
 } from './authoring';
 import {
   clusterMoveFromDrag,
@@ -259,5 +260,63 @@ describe('REGRESSION: rotating a sub-assembly preserves its shape', () => {
     const after = Math.hypot(...a1.map((v, i) => v - a2[i]));
 
     expect(after).toBeCloseTo(before, 6);
+  });
+});
+
+describe('shapeDragWorld (snap for every drag, incl. rotation)', () => {
+  const policy = { snap: 5, axisLock: false };
+
+  it('snaps a pure translation to the grid', () => {
+    const end = shapeDragWorld([0, 0, 0], [11.7, 0, 0], IDENTITY_QUAT, policy);
+    expect(end).toEqual([10, 0, 0]);
+  });
+
+  it('REGRESSION: snaps the translation of a ROTATING drag (was skipped)', () => {
+    // "Snap isn't working": every rotating drag silently bypassed snap.
+    const rot: [number, number, number, number] = [0, 0, Math.SQRT1_2, Math.SQRT1_2];
+    const end = shapeDragWorld([10, 10, 0], [23.4, 10, 0], rot, policy);
+    expect(end).toEqual([25, 10, 0]);
+  });
+
+  it('axis lock never applies to a rotating drag', () => {
+    const rot: [number, number, number, number] = [0, 0, Math.SQRT1_2, Math.SQRT1_2];
+    const end = shapeDragWorld([0, 0, 0], [8, 6, 0], rot, { snap: 0, axisLock: true });
+    expect(end).toEqual([8, 6, 0]); // both components survive
+  });
+
+  it('group rigidity survives a snapped rotating drag end-to-end', () => {
+    // The reason snap must shape the WORLD delta: quantize per cluster and
+    // the bolt circle scatters; quantize the shared delta and every part
+    // still follows ONE world rigid transform exactly.
+    const rot: [number, number, number, number] = [0, 0, Math.SQRT1_2, Math.SQRT1_2];
+    const start: [number, number, number] = [0, 0, 30];
+    const end = shapeDragWorld(start, [11.2, 0.4, 30], rot, policy);
+
+    // The one true world transform every part must follow.
+    const world = gizmoDragToRigid(start, end, rot);
+
+    const frames: Frame[] = [
+      WORLD_FRAME,
+      { position: [58, 0, 0], rotation: quatFromAxisAngle([0, 0, 1], Math.PI / 4) },
+    ];
+    const rests: Vec3[] = [[10, 0, 0], [3, -2, 5]];
+
+    for (let i = 0; i < frames.length; i++) {
+      const move = clusterMoveFromDrag(null, frames[i], start, end, rot);
+      // Part's world position after the move: move applied in the parent
+      // frame, then the parent frame applied — same as the evaluator.
+      const worldPos = applyRigid(
+        { translation: frames[i].position, rotation: frames[i].rotation },
+        applyRigid(moveToRigid(move), rests[i]),
+      );
+      const restWorld = applyRigid(
+        { translation: frames[i].position, rotation: frames[i].rotation },
+        rests[i],
+      );
+      const expected = applyRigid(world, restWorld);
+      expect(worldPos[0]).toBeCloseTo(expected[0], 4);
+      expect(worldPos[1]).toBeCloseTo(expected[1], 4);
+      expect(worldPos[2]).toBeCloseTo(expected[2], 4);
+    }
   });
 });
