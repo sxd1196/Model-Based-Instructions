@@ -7,17 +7,19 @@ that is a decision, not an oversight.
 
 The bar: author a complete teardown of a real 200+ part assembly without touching JSON.
 
+- [x] **Click-to-select in the viewport** — raycast picking, climbs to a
+      meaningful unit, shift adds, alt takes the exact mesh
+- [x] **Drag-to-author** — TransformControls gizmo on a proxy object; the drag is
+      inverted back into a schema Move, with snap and axis lock
+- [x] **Auto-explode helper** — radial explode from the selection centroid as a
+      starting point, then hand-edit
+- [ ] **Rotation UI in the Inspector** — the gizmo can rotate, but there is no
+      numeric axis/angle/pivot entry
+- [ ] **Multi-part gizmo** — dragging needs exactly one selected part today;
+      moving a sub-assembly rigidly needs a shared frame and a group commit
 - [ ] **Part-anchored callouts** — schema is right, viewer renders them at origin
-- [ ] **Rotation UI** — evaluator fully supports rotation about a pivot; Inspector
-      only exposes translation. Needs an axis + angle + pivot picker
-- [ ] **Click-to-select in the viewport** — raycast to part; today selection is
-      tree-only
-- [ ] **Drag-to-author** — move a part with a gizmo, capture the delta as a Move.
-      The single biggest authoring speedup
 - [ ] **Embed geometry in project files** — opening a project should not require
       re-opening the `.glb`
-- [ ] **Auto-explode helper** — radial explode from assembly centroid as a starting
-      point, then hand-edit. Not sequencing, just a better blank page
 
 ## Next — output quality
 

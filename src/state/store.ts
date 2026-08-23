@@ -15,8 +15,10 @@ import type {
   Move,
   Operation,
   PartStyle,
+  Quat,
   Sequence,
   Track,
+  Vec3,
 } from '@/domain/schema';
 import {
   IDENTITY_MOVE,
@@ -24,6 +26,16 @@ import {
   parseSequence,
 } from '@/domain/schema';
 import { totalDuration } from '@/domain/evaluate';
+import {
+  centroidOf,
+  constrainToDominantAxis,
+  isIdentityMove,
+  moveFromDrag,
+  radialExplode,
+  resolveSelectionTarget,
+  selectableParts,
+  snapTranslate,
+} from '@/domain/authoring';
 
 const uid = () => crypto.randomUUID();
 
@@ -59,6 +71,14 @@ interface State {
   warnings: string[];
   past: HistoryEntry[];
   future: HistoryEntry[];
+  /** Direct-manipulation gizmo mode. 'off' hides it. */
+  gizmo: 'off' | 'translate' | 'rotate';
+  /** Grid snap in mm for gizmo drags. 0 disables. */
+  snap: number;
+  /** Collapse a near-axial drag onto its dominant axis. */
+  axisLock: boolean;
+  /** Click geometry in the viewport to select. */
+  pickEnabled: boolean;
 }
 
 interface Actions {
@@ -70,6 +90,19 @@ interface Actions {
 
   select: (ids: string[], additive?: boolean) => void;
   clearSelection: () => void;
+  /** Resolve a raw picked mesh id to a sensible selection unit, then select. */
+  pickPart: (clickedId: string, opts?: { additive?: boolean; deep?: boolean }) => void;
+  setGizmo: (mode: 'off' | 'translate' | 'rotate') => void;
+  setSnap: (mm: number) => void;
+  setAxisLock: (v: boolean) => void;
+  setPickEnabled: (v: boolean) => void;
+  /**
+   * Commit a gizmo drag as a Move on the active operation.
+   * Creates the track if the part has none yet, updates it otherwise.
+   */
+  commitDrag: (partId: string, position: Vec3, rotation: Quat) => void;
+  /** Seed the active operation with a radial explode of the selection. */
+  explodeSelection: (factor: number) => void;
 
   setTime: (t: number) => void;
   play: () => void;
@@ -128,6 +161,10 @@ export const useStore = create<State & Actions>()(
       warnings: [],
       past: [],
       future: [],
+      gizmo: 'translate',
+      snap: 5,
+      axisLock: true,
+      pickEnabled: true,
 
       loadSequence: (sequence) =>
         set((s) => {
@@ -165,6 +202,112 @@ export const useStore = create<State & Actions>()(
         }),
 
       clearSelection: () => set((s) => void (s.selection = [])),
+
+      pickPart: (clickedId, opts = {}) =>
+        set((s) => {
+          if (!s.sequence) return;
+          const target = resolveSelectionTarget(s.sequence.assembly, clickedId, {
+            deep: opts.deep,
+          });
+          if (!target) return;
+          // Expand groups to their posable meshes: authors think in parts,
+          // the evaluator needs geometry.
+          const ids = selectableParts(s.sequence.assembly, [target]);
+          s.selection = opts.additive
+            ? Array.from(new Set([...s.selection, ...ids]))
+            : ids;
+        }),
+
+      setGizmo: (mode) => set((s) => void (s.gizmo = mode)),
+      setSnap: (mm) => set((s) => void (s.snap = Math.max(0, mm))),
+      setAxisLock: (v) => set((s) => void (s.axisLock = v)),
+      setPickEnabled: (v) => set((s) => void (s.pickEnabled = v)),
+
+      commitDrag: (partId, position, rotation) => {
+        const state = get();
+        const sequence = state.sequence;
+        if (!sequence) return;
+
+        const opId = state.activeOperationId;
+        if (!opId) return;
+
+        const node = sequence.assembly.parts[partId];
+        if (!node) return;
+
+        // Invert the pose composition to recover the authored delta.
+        let move: Move = moveFromDrag(
+          node.restTranslate,
+          node.restRotate,
+          position,
+          rotation,
+        );
+
+        if (state.axisLock) {
+          move = { ...move, translate: constrainToDominantAxis(move.translate) };
+        }
+        if (state.snap > 0) {
+          move = { ...move, translate: snapTranslate(move.translate, state.snap) };
+        }
+
+        // A drag that ends where it started should not create a dead track.
+        const existing = sequence.operations
+          .find((o) => o.id === opId)
+          ?.tracks.find((t) => t.parts.includes(partId));
+
+        if (isIdentityMove(move) && !existing) return;
+
+        checkpoint('Drag part');
+        set((s) => {
+          const op = findOp(s, opId);
+          if (!op) return;
+          const track = op.tracks.find((t) => t.parts.includes(partId));
+          if (track) {
+            track.to = move;
+          } else {
+            op.tracks.push({
+              id: uid(),
+              parts: [partId],
+              from: IDENTITY_MOVE,
+              to: move,
+              start: 0,
+              end: 1,
+              easing: 'easeInOut',
+            });
+          }
+        });
+      },
+
+      explodeSelection: (factor) => {
+        const state = get();
+        const sequence = state.sequence;
+        const opId = state.activeOperationId;
+        if (!sequence || !opId || !state.selection.length) return;
+
+        const parts = selectableParts(sequence.assembly, state.selection);
+        const center = centroidOf(sequence.assembly, parts);
+        const moves = radialExplode(sequence.assembly, parts, center, factor);
+        if (!moves.size) return;
+
+        checkpoint('Explode selection');
+        set((s) => {
+          const op = findOp(s, opId);
+          if (!op) return;
+          for (const [id, move] of moves) {
+            const track = op.tracks.find((t) => t.parts.includes(id));
+            if (track) track.to = move;
+            else
+              op.tracks.push({
+                id: uid(),
+                parts: [id],
+                from: IDENTITY_MOVE,
+                to: move,
+                start: 0,
+                end: 1,
+                easing: 'easeInOut',
+              });
+          }
+        });
+      },
 
       setTime: (t) =>
         set((s) => {

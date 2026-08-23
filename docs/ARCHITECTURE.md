@@ -77,12 +77,47 @@ the camera on every step just to keep it still.
 `CameraBinder` returns early when paused. While authoring you own the camera; if the
 evaluator drove it every frame, orbiting to inspect a part would fight the timeline.
 
+### Gizmo drags invert the pose composition
+
+`moveFromDrag` in `domain/authoring.ts` is the exact algebraic inverse of
+`composePartTransform`. The gizmo reports a world pose; the schema stores a
+delta from rest. Getting that inverse even slightly wrong means every drag
+introduces error that compounds across a sequence, so it is tested as a
+round-trip property over five transform cases plus a 50-drag chain.
+
+### The gizmo drives a proxy object, not the mesh
+
+`SceneBinder` rewrites every part's transform each frame from the evaluated
+timeline. A gizmo attached directly to geometry would fight it — the part would
+snap back mid-drag. Instead `DragGizmo` attaches to a free-floating proxy
+`Object3D`, parks it on the selection, and commits the proxy's pose on mouseUp.
+
+### Picking climbs to a meaningful unit
+
+Clicking a bolt head selects the whole bolt, not the head mesh. Authoring a
+500-part teardown by clicking 3000 sub-meshes is not a workflow. The climb stops
+below the root container so a single click can never select the entire assembly;
+alt-click takes the literal mesh when you really do need it.
+
+### Picking is bound to pointerup with a movement threshold
+
+Anything beyond ~4px of pointer travel is treated as a camera orbit, not a
+click. Selection changing every time you rotate the view is maddening during
+authoring.
+
+### Axis lock and snapping default ON
+
+Most assembly motions are pure axial pulls — a bolt comes straight out, a cover
+lifts straight up. Free 3D dragging essentially never produces a clean axis, and
+`24.9873mm` reads as sloppy in a work instruction. Both are defeatable in the
+toolbar, but the common case should be correct without thinking about it.
+
 ### Quaternion double-cover
 
-`slerpQuat` flips the sign of one input when their dot product is negative. `q` and
-`-q` represent the same rotation, but naive interpolation between them travels the
-long way around — a 359° spin instead of 1°. This is the classic CAD animation
-artifact and the fix is three lines.
+`slerpQuat` flips the sign of one input when their dot product is negative. `q`
+and `-q` represent the same rotation, but naive interpolation between them
+travels the long way around — a 359° spin instead of 1°. This is the classic CAD
+animation artifact and the fix is three lines.
 
 Nearly-parallel quaternions fall back to normalized lerp to avoid dividing by
 `sin(θ) ≈ 0`.

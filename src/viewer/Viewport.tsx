@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { useStore } from '@/state/store';
 import { resolveFrame } from '@/domain/evaluate';
 import { CameraBinder, PlaybackClock, SceneBinder } from './SceneBinder';
+import { DragGizmo, PickHandler } from './Manipulation';
 import type { Assembly } from '@/domain/schema';
 
 interface Props {
@@ -58,6 +59,8 @@ export function Viewport({ scene, assembly, diagonal, center }: Props) {
 
         <AnnotationLayer />
         <SelectionOutline scene={scene} assembly={assembly} />
+        <PickHandler scene={scene} assembly={assembly} />
+        <DragGizmo scene={scene} assembly={assembly} />
         <CameraBinder controlsRef={controls} />
         <PlaybackClock />
         <CameraReporter />

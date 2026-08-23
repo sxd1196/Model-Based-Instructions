@@ -7,6 +7,7 @@ import { Viewport } from '@/viewer/Viewport';
 import { AssemblyTree } from '@/ui/AssemblyTree';
 import { Timeline } from '@/ui/Timeline';
 import { Inspector } from '@/ui/Inspector';
+import { ViewportToolbar } from '@/ui/ViewportToolbar';
 import {
   downloadSequence,
   exportInstructionsHtml,
@@ -183,6 +184,7 @@ export default function App() {
             diagonal={diagonal}
             center={center}
           />
+          <ViewportToolbar />
         </main>
         <aside className="right"><Inspector /></aside>
       </div>
