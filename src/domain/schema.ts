@@ -127,7 +127,7 @@ export const FeatureAnchor = z.object({
 });
 export type FeatureAnchor = z.infer<typeof FeatureAnchor>;
 
-/** An HTML callout pinned to a part or a fixed world point. */
+/** An HTML callout pinned to a part, a fixed world point, or the screen. */
 export const Annotation = z.object({
   id: z.string(),
   text: z.string(),
@@ -142,6 +142,15 @@ export const Annotation = z.object({
       feature: FeatureAnchor.optional(),
     }),
     z.object({ kind: z.literal('world'), point: Vec3 }),
+    /**
+     * SCREEN callout: a 2D note parked in a corner of the view, always
+     * camera-aligned — general step notes ("wear gloves"), not tied to any
+     * geometry. Never draws a leader.
+     */
+    z.object({
+      kind: z.literal('screen'),
+      corner: z.enum(['tl', 'tr', 'bl', 'br']).default('tl'),
+    }),
   ]),
   /** Screen-space nudge in px so labels don't sit on top of the geometry. */
   offset: z.tuple([z.number(), z.number()]).default([12, -12]),
@@ -223,8 +232,10 @@ export type Assembly = z.infer<typeof Assembly>;
  *       optional per-part `feature` attach point for leader lines.
  *       v1 files migrate cleanly: plain `text` is preserved verbatim and
  *       leaders default on.
+ *   3 — Annotation anchor union gains 'screen' (2D corner note, camera-
+ *       aligned). Purely additive: no existing anchor changes shape.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const Sequence = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION).default(SCHEMA_VERSION),
@@ -256,6 +267,11 @@ export function migrate(raw: unknown): unknown {
   // literal check passes.
   if (version < 2) {
     doc.schemaVersion = 2;
+  }
+
+  // v2 -> v3: 'screen' joins the anchor union. Additive — nothing to rewrite.
+  if ((doc.schemaVersion as number) < 3) {
+    doc.schemaVersion = 3;
   }
 
   return doc;

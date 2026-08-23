@@ -11,7 +11,9 @@ import {
   Move,
   Operation,
   SCHEMA_VERSION,
+  Sequence,
   Track,
+  migrate,
   parseSequence,
   plainToRich,
   richToPlain,
@@ -117,6 +119,51 @@ describe('validation', () => {
       ],
     });
     expect(o.annotations).toHaveLength(2);
+  });
+});
+
+describe('v2 -> v3 migration (screen callouts)', () => {
+  it('opens a v2 project and accepts a screen anchor after migration', () => {
+    const v2 = {
+      schemaVersion: 2,
+      id: 'p1',
+      name: 'v2 project',
+      assembly: {
+        id: 'a1', name: 'asm', sourceFile: '', modelUrl: 'x.glb',
+        parts: { p: { id: 'p', name: 'P', parentId: null, isGroup: false,
+          restTranslate: [0, 0, 0], restRotate: [0, 0, 0, 1] } },
+      },
+      operations: [{
+        id: 'o1', title: 't', description: '', duration: 1, dwell: 0,
+        tracks: [], camera: null, styles: [], meta: {},
+        annotations: [{
+          id: 'a', text: 'part note',
+          anchor: { kind: 'part', partId: 'p' },
+          offset: [12, -12], leader: true,
+        }],
+      }],
+      homeCamera: null, units: 'mm',
+    };
+    const seq = Sequence.parse(migrate(v2));
+    expect(seq.schemaVersion).toBe(SCHEMA_VERSION);
+    // Existing part anchor untouched...
+    expect(seq.operations[0].annotations[0].anchor.kind).toBe('part');
+    // ...and the new screen anchor validates.
+    const withScreen = {
+      ...seq,
+      operations: [{
+        ...seq.operations[0],
+        annotations: [{
+          id: 'b', text: 'corner note',
+          anchor: { kind: 'screen', corner: 'br' },
+          offset: [0, 0], leader: false,
+        }],
+      }],
+    };
+    const parsed = Sequence.parse(withScreen);
+    const anchor = parsed.operations[0].annotations[0].anchor;
+    expect(anchor.kind).toBe('screen');
+    if (anchor.kind === 'screen') expect(anchor.corner).toBe('br');
   });
 });
 

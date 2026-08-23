@@ -115,6 +115,138 @@ export function PickHandler({ scene, assembly }: Props) {
     };
   }, [gl, onPointerDown, onPointerUp]);
 
+  // ------------------------------------------------------------ hover
+  // SolidWorks-style feature pronunciation while placing an anchor: the
+  // vertex/edge/face under the cursor lights up BEFORE you click, so you can
+  // see what you are about to attach to. Imperative three.js objects updated
+  // on pointermove — no React state per move (AGENTS.md §7).
+  const scene3 = useThree((s) => s.scene);
+  const hover = useRef<{
+    group: THREE.Group;
+    vertex: THREE.Mesh;
+    edge: THREE.Line;
+    face: THREE.Line;
+    label: HTMLDivElement;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!anchorMode) return;
+
+    // Build the preview kit once per arming.
+    const group = new THREE.Group();
+    group.visible = false;
+    group.renderOrder = 999;
+
+    const vertex = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 12, 12),
+      new THREE.MeshBasicMaterial({ color: '#ffd24d', depthTest: false, transparent: true, opacity: 0.95 }),
+    );
+    const edgeGeom = new THREE.BufferGeometry();
+    edgeGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const edge = new THREE.Line(
+      edgeGeom,
+      new THREE.LineBasicMaterial({ color: '#4dd2ff', depthTest: false, transparent: true, opacity: 0.95 }),
+    );
+    const faceGeom = new THREE.BufferGeometry();
+    faceGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
+    const face = new THREE.Line(
+      faceGeom,
+      new THREE.LineBasicMaterial({ color: '#b58cff', depthTest: false, transparent: true, opacity: 0.95 }),
+    );
+    group.add(vertex, edge, face);
+    scene3.add(group);
+
+    // A cursor-following text chip ("vertex" / "edge" / "face") in plain DOM.
+    const label = document.createElement('div');
+    label.className = 'snap-chip';
+    label.style.display = 'none';
+    gl.domElement.parentElement?.appendChild(label);
+
+    hover.current = { group, vertex, edge, face, label };
+    gl.domElement.style.cursor = 'crosshair';
+
+    const raycaster = new THREE.Raycaster();
+    const onMove = (e: PointerEvent) => {
+      const kit = hover.current;
+      if (!kit || !scene) return;
+      const rect = gl.domElement.getBoundingClientRect();
+      raycaster.setFromCamera(
+        new THREE.Vector2(
+          ((e.clientX - rect.left) / rect.width) * 2 - 1,
+          -((e.clientY - rect.top) / rect.height) * 2 + 1,
+        ),
+        camera,
+      );
+      const hit = raycaster
+        .intersectObject(scene, true)
+        .find((h) => h.object.visible && !h.object.userData.isSelectionHelper);
+
+      if (!hit || hit.face == null) {
+        kit.group.visible = false;
+        kit.label.style.display = 'none';
+        return;
+      }
+
+      const mesh = hit.object as THREE.Mesh;
+      const pos = (mesh.geometry as THREE.BufferGeometry).attributes
+        .position as THREE.BufferAttribute;
+      const tri: [Vec3, Vec3, Vec3] = [
+        [pos.getX(hit.face.a), pos.getY(hit.face.a), pos.getZ(hit.face.a)],
+        [pos.getX(hit.face.b), pos.getY(hit.face.b), pos.getZ(hit.face.b)],
+        [pos.getX(hit.face.c), pos.getY(hit.face.c), pos.getZ(hit.face.c)],
+      ];
+      const local = mesh.worldToLocal(hit.point.clone());
+      const snap = snapToFeature([local.x, local.y, local.z], tri);
+
+      // Scale the vertex ball with the triangle so it reads on any part size.
+      const size = Math.max(
+        distance(tri[0], tri[1]), distance(tri[1], tri[2]), distance(tri[2], tri[0]),
+      );
+
+      kit.group.visible = true;
+      kit.vertex.visible = snap.kind === 'vertex';
+      kit.edge.visible = snap.kind === 'edge';
+      kit.face.visible = snap.kind === 'face';
+
+      const toWorld = (p: Vec3) => mesh.localToWorld(new THREE.Vector3(...p));
+      if (snap.kind === 'vertex') {
+        kit.vertex.position.copy(toWorld(snap.point));
+        kit.vertex.scale.setScalar(Math.max(size * 0.06, 0.5));
+      } else if (snap.kind === 'edge' && snap.edge) {
+        const a = toWorld(snap.edge[0]);
+        const b = toWorld(snap.edge[1]);
+        const arr = (kit.edge.geometry.attributes.position as THREE.BufferAttribute);
+        arr.setXYZ(0, a.x, a.y, a.z);
+        arr.setXYZ(1, b.x, b.y, b.z);
+        arr.needsUpdate = true;
+      } else if (snap.kind === 'face' && snap.triangle) {
+        const pts = [...snap.triangle, snap.triangle[0]].map(toWorld);
+        const arr = (kit.face.geometry.attributes.position as THREE.BufferAttribute);
+        pts.forEach((p, i) => arr.setXYZ(i, p.x, p.y, p.z));
+        arr.needsUpdate = true;
+      }
+
+      kit.label.textContent = snap.kind;
+      kit.label.style.display = 'block';
+      kit.label.style.left = `${e.clientX - rect.left + 14}px`;
+      kit.label.style.top = `${e.clientY - rect.top + 12}px`;
+    };
+
+    gl.domElement.addEventListener('pointermove', onMove);
+    return () => {
+      gl.domElement.removeEventListener('pointermove', onMove);
+      gl.domElement.style.cursor = '';
+      scene3.remove(group);
+      group.traverse((o) => {
+        const m = o as THREE.Mesh;
+        m.geometry?.dispose?.();
+        (m.material as THREE.Material)?.dispose?.();
+      });
+      label.remove();
+      hover.current = null;
+    };
+  }, [anchorMode, gl, camera, scene, scene3]);
+
   return null;
 }
 

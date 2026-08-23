@@ -65,12 +65,12 @@ export function SceneBinder({ scene, assembly }: Props) {
       roughness: 0.4,
       metalness: 0.1,
     });
-    // Selection tint REPLACES the old orange BoxHelper outline: the part
-    // itself turns amber, which reads instantly on instanced parts (two
-    // identical handles) where a wireframe box was easy to mis-attribute.
+    // Selection tint REPLACES the old orange BoxHelper outline. GREEN, so it
+    // cannot be confused with the authored 'highlight' style (orange) in the
+    // Appearance section — selection is transient, highlight is content.
     selectionMat.current = new THREE.MeshStandardMaterial({
-      color: 0xffb340,
-      emissive: 0x7a4a00,
+      color: 0x4cd97b,
+      emissive: 0x0e5f2e,
       emissiveIntensity: 0.55,
       roughness: 0.35,
       metalness: 0.15,

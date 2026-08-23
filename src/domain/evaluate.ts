@@ -355,6 +355,8 @@ export function resolveAnnotationPoint(
   annotation: Annotation,
 ): Vec3 | null {
   if (annotation.anchor.kind === 'world') return annotation.anchor.point;
+  // Screen callouts are 2D overlay notes — they have no 3D anchor at all.
+  if (annotation.anchor.kind === 'screen') return null;
 
   const { partId, feature } = annotation.anchor;
   const node = sequence.assembly.parts[partId];

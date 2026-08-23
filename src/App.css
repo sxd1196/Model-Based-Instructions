@@ -303,6 +303,31 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
   border-radius: 4px; padding: 2px 4px; font-size: 11px;
 }
 
+/* ---------- screen callouts (2D corner notes) ---------- */
+.screen-callouts { position: absolute; inset: 0; pointer-events: none; z-index: 40; }
+.screen-callout {
+  position: absolute; max-width: 260px; pointer-events: none;
+  background: rgba(20, 24, 33, .92); border: 1px solid #2a3142;
+  border-left: 3px solid var(--accent, #f08c00);
+  border-radius: 6px; padding: 8px 12px; font-size: 13px; color: #dfe3ea;
+}
+.screen-callout.corner-tl { top: 14px; left: 14px; }
+.screen-callout.corner-tr { top: 14px; right: 14px; }
+.screen-callout.corner-bl { bottom: 14px; left: 14px; }
+.screen-callout.corner-br { bottom: 14px; right: 14px; }
+
+/* ---------- feature snap hover (anchor placement) ---------- */
+.snap-chip {
+  position: absolute; z-index: 60; pointer-events: none;
+  background: #10131a; border: 1px solid #2a3142; border-radius: 4px;
+  padding: 2px 7px; font-size: 10px; letter-spacing: .05em;
+  text-transform: uppercase; color: #ffd24d;
+}
+.corner-pick { display: flex; gap: 2px; }
+.corner-pick button { padding: 1px 6px; font-size: 12px; }
+.corner-pick button.on { background: #2a3142; color: #ffd24d; }
+.btn-pair { display: flex; gap: 6px; }
+
 /* ---------- drag and drop ---------- */
 .app.drag-over::after {
   content: ''; position: fixed; inset: 0; z-index: 900;

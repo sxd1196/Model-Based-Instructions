@@ -27,6 +27,7 @@ import {
   type Lane,
 } from '@/domain/lanes';
 import type { Move, Operation } from '@/domain/schema';
+import { NumberField } from './NumberField';
 
 export function MotionLanes({ op }: { op: Operation }) {
   const sequence = useStore((s) => s.sequence);
@@ -53,20 +54,16 @@ export function MotionLanes({ op }: { op: Operation }) {
         <span className="lanes-title">Motions</span>
         <label title="Seconds of motion">
           duration
-          <input
-            type="number" min={0.1} step={0.1} value={op.duration}
-            onChange={(e) =>
-              updateOperation(op.id, { duration: Math.max(0.1, Number(e.target.value)) })
-            }
+          <NumberField
+            value={op.duration} step={0.1} min={0.1} width={44}
+            onCommit={(v) => updateOperation(op.id, { duration: v })}
           />s
         </label>
         <label title="Hold at the end before the next step">
           dwell
-          <input
-            type="number" min={0} step={0.1} value={op.dwell}
-            onChange={(e) =>
-              updateOperation(op.id, { dwell: Math.max(0, Number(e.target.value)) })
-            }
+          <NumberField
+            value={op.dwell} step={0.1} min={0} width={44}
+            onCommit={(v) => updateOperation(op.id, { dwell: v })}
           />s
         </label>
         <button
@@ -223,10 +220,9 @@ function LaneRow({ lane, op, label, expanded, onToggle, onPatch, onRemove, other
             {(['X', 'Y', 'Z'] as const).map((axis, i) => (
               <label key={axis} className="lane-num">
                 <span>{axis}</span>
-                <input
-                  type="number" step={1}
-                  value={round1(lane.move.translate[i])}
-                  onChange={(e) => setTranslate(i, Number(e.target.value))}
+                <NumberField
+                  value={round1(lane.move.translate[i])} step={1} width={56}
+                  onCommit={(v) => setTranslate(i, v)}
                 />
               </label>
             ))}
@@ -244,10 +240,9 @@ function LaneRow({ lane, op, label, expanded, onToggle, onPatch, onRemove, other
               {aa.axis === 'custom' && <option value="custom">custom axis</option>}
             </select>
             <label className="lane-num">
-              <input
-                type="number" step={5}
-                value={round1(aa.angle)}
-                onChange={(e) => setRotation(aa.axis, Number(e.target.value))}
+              <NumberField
+                value={round1(aa.angle)} step={5} width={56}
+                onCommit={(v) => setRotation(aa.axis, v)}
               />
               <span>°</span>
             </label>
@@ -256,30 +251,22 @@ function LaneRow({ lane, op, label, expanded, onToggle, onPatch, onRemove, other
           <div className="lane-field-group">
             <span className="lane-field-label">timing</span>
             <label className="lane-num">
-              <input
-                type="number" step={0.1} min={0}
-                value={fractionToSeconds(lane.start, op.duration)}
-                onChange={(e) =>
+              <NumberField
+                value={fractionToSeconds(lane.start, op.duration)} step={0.1} min={0} width={56}
+                onCommit={(v) =>
                   onPatch({
-                    start: Math.min(
-                      secondsToFraction(Number(e.target.value), op.duration),
-                      lane.end - 0.02,
-                    ),
+                    start: Math.min(secondsToFraction(v, op.duration), lane.end - 0.02),
                   })
                 }
               />
               <span>s →</span>
             </label>
             <label className="lane-num">
-              <input
-                type="number" step={0.1} min={0}
-                value={fractionToSeconds(lane.end, op.duration)}
-                onChange={(e) =>
+              <NumberField
+                value={fractionToSeconds(lane.end, op.duration)} step={0.1} min={0} width={56}
+                onCommit={(v) =>
                   onPatch({
-                    end: Math.max(
-                      secondsToFraction(Number(e.target.value), op.duration),
-                      lane.start + 0.02,
-                    ),
+                    end: Math.max(secondsToFraction(v, op.duration), lane.start + 0.02),
                   })
                 }
               />

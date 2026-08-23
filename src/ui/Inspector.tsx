@@ -1,6 +1,7 @@
 /** Inspector: edit the active operation, its motions, camera, and callouts. */
 import { useStore } from '@/state/store';
 import type { CameraPose } from '@/domain/schema';
+import { NumberField } from './NumberField';
 import { hasMark, richColor, setColor, syncRichToPlain, toggleMark } from '@/domain/richtext';
 
 const MARK_GLYPH = { bold: 'B', italic: 'I', underline: 'U', sup: 'x²', sub: 'x₂', code: '</>' } as const;
@@ -102,19 +103,37 @@ export function Inspector() {
       <div className="section">
         <div className="section-head">
           <span>Callouts</span>
-          <button
-            onClick={() =>
-              addAnnotation(op.id, {
-                text: 'New callout',
-                anchor: selection.length
-                  ? { kind: 'part', partId: selection[0] }
-                  : { kind: 'world', point: [0, 0, 0] },
-                offset: [12, -12],
-              })
-            }
-          >
-            + add
-          </button>
+          <div className="btn-pair">
+            <button
+              title="A 2D note parked in a corner of the view — not attached to geometry"
+              onClick={() =>
+                addAnnotation(op.id, {
+                  text: 'New note',
+                  anchor: { kind: 'screen', corner: 'tl' },
+                  offset: [0, 0],
+                  leader: false,
+                })
+              }
+            >
+              + note
+            </button>
+            <button
+              title={selection.length
+                ? 'A 3D callout attached to the selected part'
+                : 'Select a part first, or the callout pins to the world origin'}
+              onClick={() =>
+                addAnnotation(op.id, {
+                  text: 'New callout',
+                  anchor: selection.length
+                    ? { kind: 'part', partId: selection[0] }
+                    : { kind: 'world', point: [0, 0, 0] },
+                  offset: [12, -12],
+                })
+              }
+            >
+              + 3D callout
+            </button>
+          </div>
         </div>
 
         {!op.annotations.length && (
@@ -181,58 +200,79 @@ export function Inspector() {
             </div>
 
             <div className="anno-meta">
-              {a.anchor.kind === 'part' ? (
-                <span title={nameOf(a.anchor.partId)}>
-                  📌 {nameOf(a.anchor.partId)}
-                  {a.anchor.feature && (
-                    <b className="feat"> · {a.anchor.feature.kind}</b>
-                  )}
-                </span>
+              {a.anchor.kind === 'screen' ? (
+                <>
+                  <span title="2D note — always faces the camera">🗒 screen note</span>
+                  <div className="corner-pick" title="Which corner of the view">
+                    {(['tl', 'tr', 'bl', 'br'] as const).map((c) => (
+                      <button
+                        key={c}
+                        className={a.anchor.kind === 'screen' && a.anchor.corner === c ? 'on' : ''}
+                        onClick={() =>
+                          updateAnnotation(op.id, a.id, {
+                            anchor: { kind: 'screen', corner: c },
+                          })
+                        }
+                      >
+                        {{ tl: '◱', tr: '◲', bl: '◰', br: '◳' }[c]}
+                      </button>
+                    ))}
+                  </div>
+                </>
               ) : (
-                <span>🌐 fixed point</span>
+                <>
+                  {a.anchor.kind === 'part' ? (
+                    <span title={nameOf(a.anchor.partId)}>
+                      📌 {nameOf(a.anchor.partId)}
+                      {a.anchor.feature && (
+                        <b className="feat"> · {a.anchor.feature.kind}</b>
+                      )}
+                    </span>
+                  ) : (
+                    <span>🌐 fixed point</span>
+                  )}
+
+                  <button
+                    className={isArmed(a.id) ? 'on' : ''}
+                    title="Click a vertex, edge, or face in the viewport to anchor the leader"
+                    onClick={() =>
+                      setAnchorMode(
+                        isArmed(a.id) ? null : { operationId: op.id, annotationId: a.id },
+                      )
+                    }
+                  >
+                    {isArmed(a.id) ? '◉ click a feature…' : '⌖ place anchor'}
+                  </button>
+
+                  <label className="leader-toggle" title="Draw a leader line">
+                    <input
+                      type="checkbox"
+                      checked={a.leader}
+                      onChange={(e) => updateAnnotation(op.id, a.id, { leader: e.target.checked })}
+                    />
+                    leader
+                  </label>
+                </>
               )}
-
-              <button
-                className={isArmed(a.id) ? 'on' : ''}
-                title="Click a vertex, edge, or face in the viewport to anchor the leader"
-                onClick={() =>
-                  setAnchorMode(
-                    isArmed(a.id) ? null : { operationId: op.id, annotationId: a.id },
-                  )
-                }
-              >
-                {isArmed(a.id) ? '◉ click a feature…' : '⌖ place anchor'}
-              </button>
-
-              <label className="leader-toggle" title="Draw a leader line">
-                <input
-                  type="checkbox"
-                  checked={a.leader}
-                  onChange={(e) => updateAnnotation(op.id, a.id, { leader: e.target.checked })}
-                />
-                leader
-              </label>
             </div>
 
+            {a.anchor.kind !== 'screen' && (
             <div className="anno-offset">
               <span>label offset</span>
-              <input
-                type="number" step={4} value={a.offset[0]}
-                onChange={(e) =>
-                  updateAnnotation(op.id, a.id, {
-                    offset: [Number(e.target.value), a.offset[1]],
-                  })
+              <NumberField
+                value={a.offset[0]} step={4} width={56}
+                onCommit={(v) =>
+                  updateAnnotation(op.id, a.id, { offset: [v, a.offset[1]] })
                 }
               />
-              <input
-                type="number" step={4} value={a.offset[1]}
-                onChange={(e) =>
-                  updateAnnotation(op.id, a.id, {
-                    offset: [a.offset[0], Number(e.target.value)],
-                  })
+              <NumberField
+                value={a.offset[1]} step={4} width={56}
+                onCommit={(v) =>
+                  updateAnnotation(op.id, a.id, { offset: [a.offset[0], v] })
                 }
               />
             </div>
+            )}
           </div>
         ))}
       </div>

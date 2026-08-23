@@ -152,7 +152,7 @@ try {
   await page.mouse.click(cx, cy);
   await page.waitForTimeout(400);
 
-  const addCallout = page.getByRole('button', { name: /^\+ add$/i });
+  const addCallout = page.getByRole('button', { name: /\+ 3D callout/i });
   if (await addCallout.count()) {
     await addCallout.first().click();
     await page.waitForTimeout(500);
@@ -190,7 +190,7 @@ try {
     }
     await shot('07-callout');
   } else {
-    record('callout controls reachable', false, 'no + add button found');
+    record('callout controls reachable', false, 'no + 3D callout button found');
   }
 
   // ---------------------------------------------------------------- step

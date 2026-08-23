@@ -23,6 +23,13 @@ export interface SnapCandidate {
 export interface SnapResult extends SnapCandidate {
   /** Face normal of the hit triangle, for offsetting the label off material. */
   normal: Vec3;
+  /**
+   * The ENTITY the snap chose, for hover pronunciation: an edge carries its
+   * two endpoints, a face its triangle. A viewer can draw the actual feature
+   * under the cursor (SolidWorks-style) instead of just a point marker.
+   */
+  edge?: [Vec3, Vec3];
+  triangle?: [Vec3, Vec3, Vec3];
 }
 
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -108,17 +115,24 @@ export function snapToFeature(
     [b, c],
     [c, a],
   ];
-  const edgeHits: SnapCandidate[] = edges.map(([p, q]) => {
+  const edgeHits: Array<SnapCandidate & { seg: [Vec3, Vec3] }> = edges.map(([p, q]) => {
     const onSegment = closestPointOnSegment(hit, p, q);
     return {
       kind: 'edge' as const,
       point: onSegment,
       distance: distance(hit, onSegment),
+      seg: [p, q] as [Vec3, Vec3],
     };
   });
   const nearestEdge = edgeHits.reduce((m, e) => (e.distance < m.distance ? e : m));
   if (nearestEdge.distance <= size * edgeTolerance) {
-    return { ...nearestEdge, normal };
+    return {
+      kind: nearestEdge.kind,
+      point: nearestEdge.point,
+      distance: nearestEdge.distance,
+      normal,
+      edge: nearestEdge.seg,
+    };
   }
 
   // --- face
@@ -128,6 +142,7 @@ export function snapToFeature(
     point: centroid,
     distance: distance(hit, centroid),
     normal,
+    triangle,
   };
 }
 

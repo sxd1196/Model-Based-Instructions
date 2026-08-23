@@ -76,6 +76,8 @@ export function Viewport({ scene, assembly, diagonal, center }: Props) {
           dampingFactor={0.12}
         />
       </Canvas>
+
+      <ScreenCalloutLayer />
     </div>
   );
 }
@@ -94,6 +96,38 @@ function CameraReporter() {
     };
   }, [camera, controls]);
   return null;
+}
+
+/**
+ * 2D screen callouts: corner notes over the viewport, outside the Canvas.
+ *
+ * Deliberately plain DOM — they are slide furniture, not scene objects, so
+ * they cost nothing per frame and are camera-aligned by construction.
+ */
+function ScreenCalloutLayer() {
+  const sequence = useStore((s) => s.sequence);
+  const time = useStore((s) => s.time);
+  if (!sequence) return null;
+
+  const frame = resolveFrame(sequence, time);
+  const notes = frame.annotations.filter((a) => a.anchor.kind === 'screen');
+  if (!notes.length) return null;
+
+  return (
+    <div className="screen-callouts">
+      {notes.map((a) => (
+        <div
+          key={a.id}
+          className={
+            'screen-callout corner-' +
+            (a.anchor.kind === 'screen' ? a.anchor.corner : 'tl')
+          }
+        >
+          <RichTextView rich={a.rich} plain={a.text} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /**
