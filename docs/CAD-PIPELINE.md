@@ -139,8 +139,8 @@ in the app — the app has no scale factor by design (AGENTS.md §2.6).
 ## Instanced parts and duplicate names (2026-08-23)
 
 CAD files repeat names for instanced components — two identical handles both
-arrive as . The importer suffixes duplicates
-(, , ...) at load time so tree rows are distinguishable and
+arrive as `faucet_handle_standard_handle`. The importer suffixes duplicates
+(`_2`, `_3`, ...) at load time so tree rows are distinguishable and
 name-based scene lookup is unambiguous; the first instance keeps the bare
 name. OCCT also wraps every solid in a node named identically to its single
 mesh; those wrappers are collapsed so each part appears ONCE in the tree.
