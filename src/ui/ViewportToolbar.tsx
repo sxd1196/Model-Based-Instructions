@@ -15,7 +15,6 @@ export function ViewportToolbar() {
   const setAxisLock = useStore((s) => s.setAxisLock);
   const setPickEnabled = useStore((s) => s.setPickEnabled);
   const explodeSelection = useStore((s) => s.explodeSelection);
-  const selectSubassemblyOf = useStore((s) => s.selectSubassemblyOf);
 
   if (!sequence) return null;
 
@@ -66,13 +65,6 @@ export function ViewportToolbar() {
       </div>
 
       <div className="vp-group">
-        <button
-          disabled={selection.length !== 1}
-          onClick={() => selection[0] && selectSubassemblyOf(selection[0])}
-          title="Select the whole sub-assembly this part belongs to"
-        >
-          ⛓ Sub-asm
-        </button>
         <button
           disabled={!selection.length || !activeOperationId}
           onClick={() => explodeSelection(0.6)}

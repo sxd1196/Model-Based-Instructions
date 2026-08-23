@@ -119,9 +119,29 @@ try {
   record('GIZMO RENDERS when a part is selected', differs,
     differs ? 'pixels change with selection' : 'no visual difference — gizmo likely missing');
 
-  // ---------------------------------------------------------------- steps
+  // ---------------------------------------------------------------- sync
+  // Viewport pick must reveal + highlight the row in the tree.
   await page.mouse.click(cx, cy);
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(700);
+  const highlightedAfterPick = await page.locator('.tree-row.selected').count();
+  record('viewport pick highlights a tree row', highlightedAfterPick > 0,
+    `${highlightedAfterPick} row(s)`);
+  await shot('05-pick-syncs-tree');
+
+  // Tree click on a GROUP must select the whole sub-assembly in 3D.
+  const groupRow = page.locator('.tree-row', { hasText: 'SUB_Cover' }).first();
+  await groupRow.click();
+  await page.waitForTimeout(600);
+  const footText = await page.locator('.tree-foot span').first().textContent();
+  const selN = parseInt(footText ?? '0', 10);
+  record('tree group click selects whole sub-assembly', selN > 5, `${selN} selected`);
+  await shot('06-tree-selects-group');
+
+  // The removed Sub-asm button should be gone.
+  const subAsmBtn = await page.getByRole('button', { name: /sub-asm/i }).count();
+  record('Sub-asm button removed', subAsmBtn === 0);
+
+  // ---------------------------------------------------------------- steps
   await page.getByRole('button', { name: /\+ Step/i }).click();
   await page.waitForTimeout(400);
   const chips = await page.locator('.chip').count();

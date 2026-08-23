@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  ancestorsOf,
   centroidOf,
   collectSubtree,
   constrainToDominantAxis,
@@ -16,6 +17,8 @@ import {
   radialExplode,
   resolveGizmoState,
   resolveSelectionTarget,
+  revealTargetFor,
+  selectFromTreeRow,
   selectableParts,
   snapTranslate,
 } from './authoring';
@@ -273,6 +276,68 @@ describe('resolveGizmoState', () => {
       expect(g.visible).toBe(false);
       expect(g.reason).toBeTruthy();
     }
+  });
+});
+
+describe('tree <-> viewport selection sync', () => {
+  it('clicking a GROUP row selects the whole sub-assembly', () => {
+    // Replaces the old Sub-asm button: the tree already shows hierarchy.
+    const ids = selectFromTreeRow(assembly, idOf('SUB_Cover'));
+    const names = ids.map((i) => assembly.parts[i].name);
+    expect(names).toContain('Cover_Plate');
+    expect(names).toContain('Cover_Gasket');
+    expect(names.some((n) => n.startsWith('Bolt_M8_'))).toBe(true);
+    expect(ids.every((i) => !assembly.parts[i].isGroup)).toBe(true);
+  });
+
+  it('clicking a LEAF row selects just that part', () => {
+    expect(selectFromTreeRow(assembly, idOf('Main_Shaft'))).toEqual([idOf('Main_Shaft')]);
+  });
+
+  it('an unknown row selects nothing rather than throwing', () => {
+    expect(selectFromTreeRow(assembly, 'bogus')).toEqual([]);
+  });
+
+  it('ancestorsOf returns the chain outermost first', () => {
+    const chain = ancestorsOf(assembly, idOf('Bolt_M8_01_Shank'));
+    const names = chain.map((i) => assembly.parts[i].name);
+    expect(names).toEqual(['SUB_Cover', 'Bolt_M8_01']);
+  });
+
+  it('a root-level node has no ancestors', () => {
+    expect(ancestorsOf(assembly, idOf('SUB_Cover'))).toEqual([]);
+  });
+
+  it('revealTargetFor points at the part for a single pick', () => {
+    const id = idOf('Cover_Plate');
+    expect(revealTargetFor(assembly, [id])).toBe(id);
+  });
+
+  it('revealTargetFor finds the COMMON ancestor for a group pick', () => {
+    // Picking a whole bolt should scroll to the bolt, not one of its meshes.
+    const target = revealTargetFor(assembly, [
+      idOf('Bolt_M8_01_Shank'),
+      idOf('Bolt_M8_01_Head'),
+    ]);
+    expect(assembly.parts[target!].name).toBe('Bolt_M8_01');
+  });
+
+  it('revealTargetFor climbs to the sub-assembly for a mixed group', () => {
+    const target = revealTargetFor(assembly, [
+      idOf('Cover_Plate'),
+      idOf('Bolt_M8_03_Head'),
+    ]);
+    expect(assembly.parts[target!].name).toBe('SUB_Cover');
+  });
+
+  it('revealTargetFor returns null for an empty selection', () => {
+    expect(revealTargetFor(assembly, [])).toBeNull();
+  });
+
+  it('round trip: tree click -> reveal target is that same row', () => {
+    const rowId = idOf('SUB_Cover');
+    const selected = selectFromTreeRow(assembly, rowId);
+    expect(revealTargetFor(assembly, selected)).toBe(rowId);
   });
 });
 

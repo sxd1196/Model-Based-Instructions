@@ -203,6 +203,67 @@ export function resolveGizmoState(args: {
   return { visible: true, reason: null, isGroup };
 }
 
+/**
+ * Selecting a TREE ROW.
+ *
+ * Clicking a group row selects the whole sub-assembly; clicking a leaf selects
+ * that part. This replaces the old "Sub-asm" toolbar button — the tree already
+ * expresses hierarchy, so selecting a branch should just work.
+ */
+export function selectFromTreeRow(
+  assembly: Assembly,
+  nodeId: string,
+): string[] {
+  const node = assembly.parts[nodeId];
+  if (!node) return [];
+  // selectableParts already walks the subtree and drops group containers.
+  return selectableParts(assembly, [nodeId]);
+}
+
+/**
+ * The chain of ancestor ids for a part, outermost first.
+ *
+ * The tree uses this to auto-expand and reveal a part picked in the viewport.
+ */
+export function ancestorsOf(assembly: Assembly, partId: string): string[] {
+  const out: string[] = [];
+  let current = assembly.parts[partId];
+  const seen = new Set<string>();
+
+  while (current?.parentId) {
+    // Defensive: a malformed export could contain a parent cycle.
+    if (seen.has(current.parentId)) break;
+    seen.add(current.parentId);
+    out.unshift(current.parentId);
+    current = assembly.parts[current.parentId];
+  }
+  return out;
+}
+
+/**
+ * Which tree row should be scrolled into view for a given selection.
+ *
+ * Picking one part reveals that part. Picking a group reveals their common
+ * ancestor rather than scrolling to an arbitrary member.
+ */
+export function revealTargetFor(
+  assembly: Assembly,
+  selection: string[],
+): string | null {
+  if (!selection.length) return null;
+  if (selection.length === 1) return selection[0];
+
+  const chains = selection.map((id) => [...ancestorsOf(assembly, id), id]);
+  let common: string | null = null;
+  for (let depth = 0; ; depth++) {
+    const at = chains[0][depth];
+    if (at === undefined) break;
+    if (!chains.every((c) => c[depth] === at)) break;
+    common = at;
+  }
+  return common ?? selection[0];
+}
+
 // ---------------------------------------------------------------- explode
 
 /**
