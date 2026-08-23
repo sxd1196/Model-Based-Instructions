@@ -265,6 +265,27 @@ a step is one work-instruction card — one image, one instruction, one camera
   identity lane at the step tail; when the step is full it SPLITS existing
   lanes for that part-set into equal windows (n motions = n windows).
 
+## Callouts and the instruction note (2026-08-23, schema v4)
+
+THE INSTRUCTION IS THE NOTE. The old separate 'screen note' annotation type
+is gone (v4 migration folds saved ones into their step's instruction). The
+instruction renders in a viewport corner (noteCorner per step), supports
+rich text (descriptionRich), and appears in the exported doc. Empty
+instructions render nothing.
+
+CALLOUT PLACEMENT is a guided two-phase flow driven by anchorMode.phase:
+'pick' (click a vertex/edge/face — feature snap) then 'pull' (the note rides
+the cursor on a camera-facing plane through the anchor; a click drops it and
+stores labelOffset). An on-screen guide window narrates each phase; Esc
+cancels. labelOffset is a WORLD-SPACE mm vector — the label is a scene
+object at a real distance from the part, so it orbits with the camera and
+follows the animated part. The leader line is a true anchor-to-label segment.
+
+RICH TEXT IS RANGE-AWARE: toggleMarkInRange/setColorInRange in
+domain/richtext.ts split spans at textarea selection offsets (newline = 1
+char). A collapsed selection formats the whole label. RichTextEditor.tsx is
+the one shared editing surface (instruction + callouts).
+
 ## Known limitations
 
 - ~~**Selection highlight uses `BoxHelper`**, not a true outline pass. Cheap and~~

@@ -1,10 +1,10 @@
-/** Inspector: edit the active operation, its motions, camera, and callouts. */
+/** Inspector: what the step SAYS — title, instruction/note, camera, callouts. */
 import { useStore } from '@/state/store';
 import type { CameraPose } from '@/domain/schema';
-import { NumberField } from './NumberField';
-import { hasMark, richColor, setColor, syncRichToPlain, toggleMark } from '@/domain/richtext';
+import { RichTextEditor } from './RichTextEditor';
 
-const MARK_GLYPH = { bold: 'B', italic: 'I', underline: 'U', sup: 'x²', sub: 'x₂', code: '</>' } as const;
+const CORNER_GLYPH = { tl: '◱', tr: '◲', bl: '◰', br: '◳' } as const;
+const CORNERS = ['tl', 'tr', 'bl', 'br'] as const;
 
 export function Inspector() {
   const sequence = useStore((s) => s.sequence);
@@ -49,17 +49,36 @@ export function Inspector() {
         />
       </label>
 
-      <label className="field">
-        <span>Instruction</span>
-        <textarea
+      <div className="field">
+        <div className="field-head">
+          <span>Instruction</span>
+          {/* The instruction IS the on-screen note; pick its corner. */}
+          <div className="corner-pick" title="Corner of the viewport where the note appears">
+            {CORNERS.map((c) => (
+              <button
+                key={c}
+                className={op.noteCorner === c ? 'on' : ''}
+                title={{ tl: 'top left', tr: 'top right', bl: 'bottom left', br: 'bottom right' }[c]}
+                onClick={() => updateOperation(op.id, { noteCorner: c })}
+              >
+                {CORNER_GLYPH[c]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <RichTextEditor
+          text={op.description}
+          rich={op.descriptionRich}
           rows={3}
-          value={op.description}
-          placeholder="What the operator does in this step…"
-          onChange={(e) => updateOperation(op.id, { description: e.target.value })}
+          placeholder="What the operator does in this step — shown in the viewport corner and in the exported doc."
+          onChange={(patch) =>
+            updateOperation(op.id, {
+              ...(patch.text !== undefined ? { description: patch.text } : {}),
+              descriptionRich: patch.rich,
+            })
+          }
         />
-      </label>
-
-
+      </div>
 
       <div className="section">
         <div className="section-head">
@@ -103,37 +122,29 @@ export function Inspector() {
       <div className="section">
         <div className="section-head">
           <span>Callouts</span>
-          <div className="btn-pair">
-            <button
-              title="A 2D note parked in a corner of the view — not attached to geometry"
-              onClick={() =>
-                addAnnotation(op.id, {
-                  text: 'New note',
-                  anchor: { kind: 'screen', corner: 'tl' },
-                  offset: [0, 0],
-                  leader: false,
-                })
+          <button
+            title={selection.length
+              ? 'Add a callout attached to the selected part, then place its anchor'
+              : 'Select a part first, or the callout pins to the world origin'}
+            onClick={() => {
+              addAnnotation(op.id, {
+                text: 'New callout',
+                anchor: selection.length
+                  ? { kind: 'part', partId: selection[0] }
+                  : { kind: 'world', point: [0, 0, 0] },
+              });
+              // Launch straight into the guided two-step placement for the
+              // callout we just created.
+              const created = useStore
+                .getState()
+                .sequence?.operations.find((o) => o.id === op.id)?.annotations.at(-1);
+              if (created) {
+                setAnchorMode({ operationId: op.id, annotationId: created.id });
               }
-            >
-              + note
-            </button>
-            <button
-              title={selection.length
-                ? 'A 3D callout attached to the selected part'
-                : 'Select a part first, or the callout pins to the world origin'}
-              onClick={() =>
-                addAnnotation(op.id, {
-                  text: 'New callout',
-                  anchor: selection.length
-                    ? { kind: 'part', partId: selection[0] }
-                    : { kind: 'world', point: [0, 0, 0] },
-                  offset: [12, -12],
-                })
-              }
-            >
-              + 3D callout
-            </button>
-          </div>
+            }}
+          >
+            + add
+          </button>
         </div>
 
         {!op.annotations.length && (
@@ -145,139 +156,61 @@ export function Inspector() {
         {op.annotations.map((a) => (
           <div className="anno-card" key={a.id}>
             <div className="anno-row">
-              <input
-                value={a.text}
+              <RichTextEditor
+                text={a.text}
+                rich={a.rich}
+                rows={1}
                 placeholder="Callout text"
-                onChange={(e) =>
+                onChange={(patch) =>
                   updateAnnotation(op.id, a.id, {
-                    text: e.target.value,
-                    rich: syncRichToPlain(a.rich, e.target.value),
+                    ...(patch.text !== undefined ? { text: patch.text } : {}),
+                    rich: patch.rich,
                   })
                 }
               />
-              <button onClick={() => removeAnnotation(op.id, a.id)}>✕</button>
-            </div>
-
-            {/* Formatting: applies to the whole callout. Per-span editing
-                would need a full editor; whole-label styling covers the
-                real cases (a bold warning, a superscript tolerance). */}
-            <div className="anno-marks">
-              {(['bold', 'italic', 'underline', 'sup', 'sub', 'code'] as const).map((mark) => {
-                const active = hasMark(a.rich, mark);
-                return (
-                  <button
-                    key={mark}
-                    className={active ? 'on' : ''}
-                    title={mark}
-                    onClick={() =>
-                      updateAnnotation(op.id, a.id, {
-                        rich: toggleMark(a.rich, a.text, mark),
-                      })
-                    }
-                  >
-                    {MARK_GLYPH[mark]}
-                  </button>
-                );
-              })}
-              <input
-                type="color"
-                title="Text colour"
-                value={richColor(a.rich) ?? '#dfe3ea'}
-                onChange={(e) =>
-                  updateAnnotation(op.id, a.id, {
-                    rich: setColor(a.rich, a.text, e.target.value),
-                  })
-                }
-              />
-              {a.rich && (
-                <button
-                  title="Clear formatting"
-                  onClick={() => updateAnnotation(op.id, a.id, { rich: undefined })}
-                >
-                  ⌫
-                </button>
-              )}
+              <button className="anno-x" onClick={() => removeAnnotation(op.id, a.id)}>✕</button>
             </div>
 
             <div className="anno-meta">
-              {a.anchor.kind === 'screen' ? (
-                <>
-                  <span title="2D note — always faces the camera">🗒 screen note</span>
-                  <div className="corner-pick" title="Which corner of the view">
-                    {(['tl', 'tr', 'bl', 'br'] as const).map((c) => (
-                      <button
-                        key={c}
-                        className={a.anchor.kind === 'screen' && a.anchor.corner === c ? 'on' : ''}
-                        onClick={() =>
-                          updateAnnotation(op.id, a.id, {
-                            anchor: { kind: 'screen', corner: c },
-                          })
-                        }
-                      >
-                        {{ tl: '◱', tr: '◲', bl: '◰', br: '◳' }[c]}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <>
-                  {a.anchor.kind === 'part' ? (
-                    <span title={nameOf(a.anchor.partId)}>
-                      📌 {nameOf(a.anchor.partId)}
-                      {a.anchor.feature && (
-                        <b className="feat"> · {a.anchor.feature.kind}</b>
-                      )}
-                    </span>
-                  ) : (
-                    <span>🌐 fixed point</span>
+              {a.anchor.kind === 'part' ? (
+                <span title={nameOf(a.anchor.partId)}>
+                  📌 {nameOf(a.anchor.partId)}
+                  {a.anchor.feature && (
+                    <b className="feat"> · {a.anchor.feature.kind}</b>
                   )}
-
-                  <button
-                    className={isArmed(a.id) ? 'on' : ''}
-                    title="Click a vertex, edge, or face in the viewport to anchor the leader"
-                    onClick={() =>
-                      setAnchorMode(
-                        isArmed(a.id) ? null : { operationId: op.id, annotationId: a.id },
-                      )
-                    }
-                  >
-                    {isArmed(a.id) ? '◉ click a feature…' : '⌖ place anchor'}
-                  </button>
-
-                  <label className="leader-toggle" title="Draw a leader line">
-                    <input
-                      type="checkbox"
-                      checked={a.leader}
-                      onChange={(e) => updateAnnotation(op.id, a.id, { leader: e.target.checked })}
-                    />
-                    leader
-                  </label>
-                </>
+                </span>
+              ) : (
+                <span>🌐 fixed point</span>
               )}
-            </div>
 
-            {a.anchor.kind !== 'screen' && (
-            <div className="anno-offset">
-              <span>label offset</span>
-              <NumberField
-                value={a.offset[0]} step={4} width={56}
-                onCommit={(v) =>
-                  updateAnnotation(op.id, a.id, { offset: [v, a.offset[1]] })
+              <button
+                className={isArmed(a.id) ? 'on' : ''}
+                title="Guided placement: click the anchor feature, then pull the note to where you want it"
+                onClick={() =>
+                  setAnchorMode(
+                    isArmed(a.id) ? null : { operationId: op.id, annotationId: a.id },
+                  )
                 }
-              />
-              <NumberField
-                value={a.offset[1]} step={4} width={56}
-                onCommit={(v) =>
-                  updateAnnotation(op.id, a.id, { offset: [a.offset[0], v] })
-                }
-              />
+              >
+                {isArmed(a.id) ? '◉ placing…' : '⌖ place'}
+              </button>
+
+              <span className="anno-dist" title="Leader length (anchor to note)">
+                ↔ {Math.hypot(...a.labelOffset).toFixed(0)}mm
+              </span>
+
+              <label className="leader-toggle" title="Draw a leader line">
+                <input
+                  type="checkbox"
+                  checked={a.leader}
+                  onChange={(e) => updateAnnotation(op.id, a.id, { leader: e.target.checked })}
+                />
+                leader
+              </label>
             </div>
-            )}
           </div>
         ))}
       </div>
     </div>
   );
 }
-
-

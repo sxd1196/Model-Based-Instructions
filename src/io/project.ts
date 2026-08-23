@@ -40,7 +40,7 @@ export function buildInstructionsHtml(
           ? `<img class="shot" src="${images.get(e.operation.id)}" alt="Step ${i + 1}">`
           : ''
       }
-      ${e.operation.description ? `<p>${escapeHtml(e.operation.description)}</p>` : ''}
+      ${e.operation.description ? `<p>${richToHtml(e.operation.descriptionRich, e.operation.description)}</p>` : ''}
       ${
         e.operation.annotations.length
           ? `<ul class="callouts">${e.operation.annotations

@@ -82,6 +82,7 @@ describe('authoring a real disassembly sequence', () => {
     id,
     title: id,
     description: '',
+    noteCorner: 'tl' as const,
     duration: 1,
     dwell: 0.5,
     tracks: [

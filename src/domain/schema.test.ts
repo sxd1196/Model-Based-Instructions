@@ -146,24 +146,9 @@ describe('v2 -> v3 migration (screen callouts)', () => {
     };
     const seq = Sequence.parse(migrate(v2));
     expect(seq.schemaVersion).toBe(SCHEMA_VERSION);
-    // Existing part anchor untouched...
+    // Existing part anchor untouched, px offset converted to world mm (v4).
     expect(seq.operations[0].annotations[0].anchor.kind).toBe('part');
-    // ...and the new screen anchor validates.
-    const withScreen = {
-      ...seq,
-      operations: [{
-        ...seq.operations[0],
-        annotations: [{
-          id: 'b', text: 'corner note',
-          anchor: { kind: 'screen', corner: 'br' },
-          offset: [0, 0], leader: false,
-        }],
-      }],
-    };
-    const parsed = Sequence.parse(withScreen);
-    const anchor = parsed.operations[0].annotations[0].anchor;
-    expect(anchor.kind).toBe('screen');
-    if (anchor.kind === 'screen') expect(anchor.corner).toBe('br');
+    expect(seq.operations[0].annotations[0].labelOffset).toEqual([24, 24, 0]);
   });
 });
 
@@ -322,5 +307,70 @@ describe('round trip', () => {
       name: 'Gehäuse — Ø25 · 12 N·m',
     });
     expect(parseSequence(JSON.parse(JSON.stringify(s))).name).toBe('Gehäuse — Ø25 · 12 N·m');
+  });
+});
+
+describe('v3 -> v4 migration', () => {
+  const v3doc = () => ({
+    schemaVersion: 3,
+    id: 'seq1',
+    name: 'Legacy',
+    intent: 'disassembly',
+    assembly: {
+      id: 'a1', name: 'Asm', sourceFile: '', modelUrl: 'demo://x',
+      parts: { p1: { id: 'p1', name: 'Part', parentId: null } },
+    },
+    operations: [
+      {
+        id: 'op1',
+        title: 'Step',
+        description: 'Existing instruction.',
+        duration: 1, dwell: 0, tracks: [], camera: null, styles: [], meta: {},
+        annotations: [
+          {
+            id: 'a1', text: 'Wear gloves',
+            anchor: { kind: 'screen', corner: 'br' },
+            offset: [12, -12], leader: false,
+          },
+          {
+            id: 'a2', text: 'Torque 12 Nm',
+            anchor: { kind: 'part', partId: 'p1' },
+            offset: [30, -20], leader: true,
+          },
+        ],
+      },
+    ],
+    homeCamera: null,
+    units: 'mm',
+  });
+
+  it('folds screen notes into the step instruction', () => {
+    const seq = parseSequence(v3doc());
+    expect(seq.operations[0].description).toBe('Existing instruction.\nWear gloves');
+    expect(seq.operations[0].noteCorner).toBe('br');
+    // The screen annotation itself is gone.
+    expect(seq.operations[0].annotations).toHaveLength(1);
+    expect(seq.operations[0].annotations[0].id).toBe('a2');
+  });
+
+  it('converts px offsets to world labelOffset without dropping the callout', () => {
+    const seq = parseSequence(v3doc());
+    const a = seq.operations[0].annotations[0];
+    expect(a.labelOffset).toEqual([60, 40, 0]);
+    expect((a as unknown as Record<string, unknown>).offset).toBeUndefined();
+  });
+
+  it('a v3 screen note with empty text vanishes without touching the instruction', () => {
+    const doc = v3doc();
+    doc.operations[0].annotations[0].text = '   ';
+    const seq = parseSequence(doc);
+    expect(seq.operations[0].description).toBe('Existing instruction.');
+  });
+
+  it('v1 documents still climb all the way to v4', () => {
+    const doc = v3doc() as Record<string, unknown>;
+    delete doc.schemaVersion;
+    const seq = parseSequence(doc);
+    expect(seq.schemaVersion).toBe(4);
   });
 });

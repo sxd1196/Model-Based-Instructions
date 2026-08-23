@@ -2,7 +2,7 @@
  * Rich text editing helper tests.
  */
 import { describe, expect, it } from 'vitest';
-import { hasMark, richColor, setColor, syncRichToPlain, toggleMark } from './richtext';
+import { hasMark, rangeHasMark, richColor, richToHtml, setColor, setColorInRange, syncRichToPlain, toggleMark, toggleMarkInRange } from './richtext';
 import { plainToRich, richToPlain, type RichText } from './schema';
 
 describe('toggleMark', () => {
@@ -94,5 +94,70 @@ describe('syncRichToPlain', () => {
     const synced = syncRichToPlain(bold, 'one\ntwo')!;
     expect(richToPlain(synced)).toBe('one\ntwo');
     expect(hasMark(synced, 'bold')).toBe(true);
+  });
+});
+
+describe('range formatting (selection-aware)', () => {
+  it('bolds ONLY the selected range, splitting spans', () => {
+    // "Torque to 12 Nm" — select "12 Nm" (chars 10..15).
+    const rich = toggleMarkInRange(undefined, 'Torque to 12 Nm', 10, 15, 'bold');
+    expect(rich[0].map((s) => [s.text, s.marks.join(',')])).toEqual([
+      ['Torque to ', ''],
+      ['12 Nm', 'bold'],
+    ]);
+  });
+
+  it('a mid-word range splits into three spans', () => {
+    const rich = toggleMarkInRange(undefined, 'abcdef', 2, 4, 'italic');
+    expect(rich[0].map((s) => s.text)).toEqual(['ab', 'cd', 'ef']);
+    expect(rich[0][1].marks).toEqual(['italic']);
+    expect(rich[0][0].marks).toEqual([]);
+  });
+
+  it('toggling the same range twice removes the mark', () => {
+    const once = toggleMarkInRange(undefined, 'hello world', 0, 5, 'bold');
+    const twice = toggleMarkInRange(once, 'hello world', 0, 5, 'bold');
+    expect(twice.flat().every((s) => !s.marks.includes('bold'))).toBe(true);
+  });
+
+  it('stacks marks: bold a range, then italic a sub-range', () => {
+    const bolded = toggleMarkInRange(undefined, 'critical torque', 0, 8, 'bold');
+    const both = toggleMarkInRange(bolded, 'critical torque', 0, 4, 'italic');
+    const first = both[0][0];
+    expect(first.text).toBe('crit');
+    expect(first.marks.sort()).toEqual(['bold', 'italic']);
+    expect(both[0][1].marks).toEqual(['bold']);
+  });
+
+  it('ranges span paragraphs (newline counts one char)', () => {
+    const rich = toggleMarkInRange(undefined, 'ab\ncd', 1, 4, 'underline');
+    expect(rich[0].map((s) => [s.text, s.marks.join(',')])).toEqual([
+      ['a', ''], ['b', 'underline'],
+    ]);
+    expect(rich[1].map((s) => [s.text, s.marks.join(',')])).toEqual([
+      ['c', 'underline'], ['d', ''],
+    ]);
+  });
+
+  it('collapsed selection falls back to whole-label toggle', () => {
+    const rich = toggleMarkInRange(undefined, 'all of it', 3, 3, 'bold');
+    expect(rich.flat().every((s) => s.marks.includes('bold'))).toBe(true);
+  });
+
+  it('colours only the range', () => {
+    const rich = setColorInRange(undefined, 'warning here', 0, 7, '#ff0000');
+    expect(rich[0][0].color).toBe('#ff0000');
+    expect(rich[0][1].color).toBeUndefined();
+  });
+
+  it('rangeHasMark answers per-range, not per-label', () => {
+    const rich = toggleMarkInRange(undefined, 'half bold here', 0, 4, 'bold');
+    expect(rangeHasMark(rich, 'half bold here', 0, 4, 'bold')).toBe(true);
+    expect(rangeHasMark(rich, 'half bold here', 5, 9, 'bold')).toBe(false);
+  });
+
+  it('round-trips to HTML with the range styled', () => {
+    const rich = toggleMarkInRange(undefined, 'Torque 12 Nm', 7, 12, 'bold');
+    expect(richToHtml(rich, 'Torque 12 Nm')).toBe('<div>Torque <strong>12 Nm</strong></div>');
   });
 });

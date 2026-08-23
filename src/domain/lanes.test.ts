@@ -27,7 +27,7 @@ const track = (partial: Partial<Track>): Track => ({
 });
 
 const op = (tracks: Track[]): Operation => ({
-  id: 'op', title: '', description: '', duration: 2, dwell: 0,
+  id: 'op', title: '', description: '', noteCorner: 'tl' as const, duration: 2, dwell: 0,
   tracks, camera: null, annotations: [], styles: [], meta: {},
 });
 

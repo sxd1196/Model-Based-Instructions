@@ -127,7 +127,7 @@ export const FeatureAnchor = z.object({
 });
 export type FeatureAnchor = z.infer<typeof FeatureAnchor>;
 
-/** An HTML callout pinned to a part, a fixed world point, or the screen. */
+/** An HTML callout pinned to a part or a fixed world point. */
 export const Annotation = z.object({
   id: z.string(),
   text: z.string(),
@@ -142,18 +142,16 @@ export const Annotation = z.object({
       feature: FeatureAnchor.optional(),
     }),
     z.object({ kind: z.literal('world'), point: Vec3 }),
-    /**
-     * SCREEN callout: a 2D note parked in a corner of the view, always
-     * camera-aligned — general step notes ("wear gloves"), not tied to any
-     * geometry. Never draws a leader.
-     */
-    z.object({
-      kind: z.literal('screen'),
-      corner: z.enum(['tl', 'tr', 'bl', 'br']).default('tl'),
-    }),
   ]),
-  /** Screen-space nudge in px so labels don't sit on top of the geometry. */
-  offset: z.tuple([z.number(), z.number()]).default([12, -12]),
+  /**
+   * WORLD-SPACE offset from the anchor to the label, in mm (v4).
+   *
+   * Replaces the old 2D pixel nudge: the label now lives IN the scene at a
+   * real distance from the part — authored by pulling the note out in 3D —
+   * so it keeps its position as the camera orbits and follows the part as
+   * it animates. [0,0,0] means "sit on the anchor".
+   */
+  labelOffset: Vec3.default([25, 25, 0]),
   /** Draw a line from the anchor to the label. */
   leader: z.boolean().default(true),
 });
@@ -180,6 +178,14 @@ export const Operation = z.object({
   id: z.string(),
   title: z.string().default('Untitled operation'),
   description: z.string().default(''),
+  /**
+   * Formatted instruction (v4). The instruction IS the step's on-screen
+   * note: it renders in a viewport corner during the step and in the
+   * exported doc. When absent, `description` renders plain.
+   */
+  descriptionRich: RichText.optional(),
+  /** Which viewport corner the instruction note occupies. */
+  noteCorner: z.enum(['tl', 'tr', 'bl', 'br']).default('tl'),
   /** Seconds. Real duration of the animation, not the shop-floor cycle time. */
   duration: z.number().positive().default(1.5),
   /** Seconds of held still-frame after the motion, for readability. */
@@ -234,8 +240,13 @@ export type Assembly = z.infer<typeof Assembly>;
  *       leaders default on.
  *   3 — Annotation anchor union gains 'screen' (2D corner note, camera-
  *       aligned). Purely additive: no existing anchor changes shape.
+ *   4 — The step INSTRUCTION becomes the on-screen note (descriptionRich +
+ *       noteCorner on Operation); the 'screen' anchor kind is REMOVED and
+ *       old screen notes fold into their step's instruction. Callout label
+ *       offset changes from 2D px to a WORLD-SPACE mm vector (labelOffset),
+ *       authored by pulling the note in 3D.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const Sequence = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION).default(SCHEMA_VERSION),
@@ -272,6 +283,47 @@ export function migrate(raw: unknown): unknown {
   // v2 -> v3: 'screen' joins the anchor union. Additive — nothing to rewrite.
   if ((doc.schemaVersion as number) < 3) {
     doc.schemaVersion = 3;
+  }
+
+  // v3 -> v4: screen notes fold into the step instruction; px offsets become
+  // world-space labelOffset. Nothing is silently dropped.
+  if ((doc.schemaVersion as number) < 4) {
+    const ops = Array.isArray(doc.operations) ? (doc.operations as Record<string, unknown>[]) : [];
+    for (const op of ops) {
+      const annos = Array.isArray(op.annotations)
+        ? (op.annotations as Record<string, unknown>[])
+        : [];
+
+      const kept: unknown[] = [];
+      for (const a of annos) {
+        const anchor = a.anchor as Record<string, unknown> | undefined;
+        if (anchor?.kind === 'screen') {
+          // Fold the screen note's text into the instruction rather than
+          // deleting content the user wrote.
+          const text = typeof a.text === 'string' ? a.text : '';
+          if (text.trim()) {
+            const desc = typeof op.description === 'string' ? op.description : '';
+            op.description = desc ? `${desc}\n${text}` : text;
+          }
+          if (typeof anchor.corner === 'string') op.noteCorner = anchor.corner;
+          continue;
+        }
+        // px offset -> world mm offset. Screen px and world mm are different
+        // spaces; a faithful conversion needs a camera we don't have here.
+        // Keep the old 2D shape's INTENT (up and to the side) at a sensible
+        // magnitude instead of inventing precision.
+        if (Array.isArray(a.offset) && a.offset.length === 2) {
+          const [ox, oy] = a.offset as [number, number];
+          // `+ 0` normalizes -0 to 0 so migration stays idempotent (a -0
+          // survives JSON round-trips as 0, which would then mismatch).
+          a.labelOffset = [ox * 2 + 0, -oy * 2 + 0, 0];
+          delete a.offset;
+        }
+        kept.push(a);
+      }
+      op.annotations = kept;
+    }
+    doc.schemaVersion = 4;
   }
 
   return doc;

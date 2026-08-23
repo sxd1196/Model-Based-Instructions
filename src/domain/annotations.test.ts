@@ -28,7 +28,7 @@ function seqWith(operations: Operation[]): Sequence {
 
 function slide(partId: string, z: number, rotate = IDENTITY_QUAT): Operation {
   return {
-    id: 'op', title: 'move', description: '', duration: 1, dwell: 0,
+    id: 'op', title: 'move', description: '', noteCorner: 'tl' as const, duration: 1, dwell: 0,
     tracks: [{
       id: 't', parts: [partId],
       from: { translate: [0, 0, 0], rotate: IDENTITY_QUAT, pivot: [0, 0, 0] },

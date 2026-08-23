@@ -289,7 +289,7 @@ describe('updateAnnotation', () => {
   it('edits text', () => {
     const opId = s().addOperation()!;
     s().addAnnotation(opId, {
-      text: 'old', anchor: { kind: 'world', point: [0, 0, 0] }, offset: [0, 0],
+      text: 'old', anchor: { kind: 'world', point: [0, 0, 0] }, labelOffset: [0, 0, 0],
     });
     const aid = s().sequence!.operations[0].annotations[0].id;
     s().updateAnnotation(opId, aid, { text: 'new' });
@@ -303,7 +303,7 @@ describe('updateAnnotation', () => {
       translate: [0, 0, 90], rotate: IDENTITY_QUAT, pivot: [0, 0, 0],
     });
     s().addAnnotation(opId, {
-      text: 'x', anchor: { kind: 'world', point: [0, 0, 0] }, offset: [0, 0],
+      text: 'x', anchor: { kind: 'world', point: [0, 0, 0] }, labelOffset: [0, 0, 0],
     });
     const aid = s().sequence!.operations[0].annotations[0].id;
 
@@ -319,17 +319,17 @@ describe('updateAnnotation', () => {
   it('edits the label offset', () => {
     const opId = s().addOperation()!;
     s().addAnnotation(opId, {
-      text: 'x', anchor: { kind: 'world', point: [0, 0, 0] }, offset: [0, 0],
+      text: 'x', anchor: { kind: 'world', point: [0, 0, 0] }, labelOffset: [0, 0, 0],
     });
     const aid = s().sequence!.operations[0].annotations[0].id;
-    s().updateAnnotation(opId, aid, { offset: [40, -30] });
-    expect(s().sequence!.operations[0].annotations[0].offset).toEqual([40, -30]);
+    s().updateAnnotation(opId, aid, { labelOffset: [40, -30, 0] });
+    expect(s().sequence!.operations[0].annotations[0].labelOffset).toEqual([40, -30, 0]);
   });
 
   it('is undoable', () => {
     const opId = s().addOperation()!;
     s().addAnnotation(opId, {
-      text: 'original', anchor: { kind: 'world', point: [0, 0, 0] }, offset: [0, 0],
+      text: 'original', anchor: { kind: 'world', point: [0, 0, 0] }, labelOffset: [0, 0, 0],
     });
     const aid = s().sequence!.operations[0].annotations[0].id;
     s().updateAnnotation(opId, aid, { text: 'changed' });

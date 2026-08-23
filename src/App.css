@@ -239,6 +239,60 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .vp-label { font-size: 9px; letter-spacing: .3px; text-transform: uppercase; opacity: .75; }
 .vp-mode.on .vp-label { opacity: 1; }
 
+/* ---------- anchor placement guide ---------- */
+.anchor-guide {
+  position: absolute; top: 64px; left: 50%; transform: translateX(-50%);
+  z-index: 40; width: 300px; padding: 10px 12px;
+  background: #161b26; border: 1px solid #f08c00; border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.5);
+}
+.anchor-guide-title { font-size: 12px; font-weight: 600; color: #ffb340; margin-bottom: 4px; }
+.anchor-guide-body { font-size: 11px; color: #b6bdc9; line-height: 1.45; }
+.anchor-guide-cancel {
+  margin-top: 8px; font-size: 10px; background: none;
+  border: 1px solid #2a3142; border-radius: 4px; color: #8b93a3;
+  padding: 2px 8px; cursor: pointer;
+}
+.anchor-guide-cancel:hover { color: #dfe3ea; }
+
+/* ---------- rich text editor ---------- */
+.rte { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rte textarea { width: 100%; resize: vertical; }
+.rte-toolbar { display: flex; gap: 3px; align-items: center; }
+.rte-toolbar button {
+  min-width: 22px; padding: 1px 5px; font-size: 10px;
+  background: #161a22; border: 1px solid #262b36; border-radius: 4px;
+  color: #9aa3b5; cursor: pointer;
+}
+.rte-toolbar button.on { color: #ffb340; border-color: #f08c00; }
+.rte-toolbar input[type='color'] {
+  width: 22px; height: 20px; padding: 0; border: 1px solid #262b36;
+  border-radius: 4px; background: none; cursor: pointer;
+}
+
+.field-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 3px;
+}
+.field-head > span { font-size: 11px; color: #8b93a3; }
+.corner-pick { display: flex; gap: 2px; }
+.corner-pick button {
+  width: 22px; height: 20px; font-size: 11px; line-height: 1;
+  background: #161a22; border: 1px solid #262b36; border-radius: 4px;
+  color: #9aa3b5; cursor: pointer;
+}
+.corner-pick button.on { color: #ffb340; border-color: #f08c00; }
+
+.anno-dist { color: #7d8596; font-size: 10px; white-space: nowrap; }
+.anno-x { background: none; border: none; color: #6a7180; cursor: pointer; align-self: flex-start; }
+.anno-x:hover { color: #e66; }
+
+.callout.pulling { outline: 1px dashed #ffb340; opacity: .92; pointer-events: none; }
+.callout-distance {
+  margin-top: 2px; font-size: 10px; color: #ffb340;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- motion lanes ---------- */
 .lanes { border-top: 1px solid var(--border, #262b36); padding: 4px 10px 6px; }
 .lanes-head {

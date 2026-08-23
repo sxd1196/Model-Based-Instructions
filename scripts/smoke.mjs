@@ -152,7 +152,7 @@ try {
   await page.mouse.click(cx, cy);
   await page.waitForTimeout(400);
 
-  const addCallout = page.getByRole('button', { name: /\+ 3D callout/i });
+  const addCallout = page.locator('.section-head', { hasText: 'Callouts' }).getByRole('button', { name: /\+ add/i });
   if (await addCallout.count()) {
     await addCallout.first().click();
     await page.waitForTimeout(500);
@@ -160,38 +160,97 @@ try {
     const cardCount = await page.locator('.anno-card').count();
     record('callout created', cardCount > 0, `${cardCount} card(s)`);
 
-    // Rich text: toggle bold and confirm it sticks.
-    const boldBtn = page.locator('.anno-marks button', { hasText: /^B$/ }).first();
-    if (await boldBtn.count()) {
-      await boldBtn.click();
-      await page.waitForTimeout(400);
-      const isOn = await boldBtn.evaluate((el) => el.classList.contains('on'));
-      record('rich text bold toggles', isOn);
-      const strongInScene = await page.locator('.callout strong').count();
-      record('bold renders in the 3D callout', strongInScene > 0);
-    }
+    // + add launches the guided flow immediately: the little instruction
+    // window must be up and in phase 1.
+    const guideUp = await page.locator('.anchor-guide').count();
+    const guideText = guideUp
+      ? await page.locator('.anchor-guide-title').textContent()
+      : '';
+    record('guide window appears with step 1', /pick the anchor/i.test(guideText ?? ''),
+      guideText ?? 'no guide');
 
-    // Leader line toggle should be present and checked by default.
-    const leaderBox = page.locator('.leader-toggle input').first();
-    if (await leaderBox.count()) {
-      record('leader line on by default', await leaderBox.isChecked());
-    }
+    // Phase 1: click a feature on the part.
+    await page.mouse.click(cx + 40, cy - 30);
+    await page.waitForTimeout(600);
+    const featText = await page.locator('.anno-meta .feat').count();
+    record('feature anchor set by the pick click', featText > 0,
+      featText ? await page.locator('.anno-meta .feat').first().textContent() ?? '' : 'no feature badge');
 
-    // Anchor placement arms, then a viewport click sets a feature anchor.
-    const anchorBtn = page.getByRole('button', { name: /place anchor/i }).first();
-    if (await anchorBtn.count()) {
-      await anchorBtn.click();
-      await page.waitForTimeout(300);
-      await page.mouse.click(cx + 40, cy - 30);
-      await page.waitForTimeout(600);
-      const featText = await page.locator('.anno-meta .feat').count();
-      record('viewport click sets a feature anchor', featText > 0,
-        featText ? await page.locator('.anno-meta .feat').first().textContent() ?? '' : 'no feature badge');
-    }
+    // Guide must now show phase 2 (pull).
+    const guide2 = await page.locator('.anchor-guide-title').textContent().catch(() => '');
+    record('guide advances to step 2 (pull)', /place the note/i.test(guide2 ?? ''),
+      guide2 ?? 'guide gone');
+
+    // Phase 2: pull the note away and drop it with a click.
+    await page.mouse.move(cx + 160, cy - 130);
+    await page.waitForTimeout(300);
+    const distDuringPull = await page.locator('.callout-distance').textContent().catch(() => null);
+    record('distance readout shows while pulling', distDuringPull !== null,
+      distDuringPull ?? 'no readout');
+    await page.mouse.click(cx + 160, cy - 130);
+    await page.waitForTimeout(500);
+
+    const guideGone = await page.locator('.anchor-guide').count();
+    record('guide closes after the drop', guideGone === 0);
+
+    const storedOffset = await page.evaluate(() => {
+      const st = window.__store.getState();
+      const a = st.sequence.operations
+        .flatMap((o) => o.annotations)
+        .find((x) => x.anchor.kind === 'part');
+      return a ? a.labelOffset : null;
+    });
+    const offMag = storedOffset
+      ? Math.hypot(storedOffset[0], storedOffset[1], storedOffset[2])
+      : 0;
+    record('pulled offset stored in world mm', offMag > 5,
+      storedOffset ? `[${storedOffset.map((n) => n.toFixed(0))}] = ${offMag.toFixed(0)}mm` : 'none');
+
+    // Selection-aware rich text: select part of the callout text, bold it,
+    // and confirm ONLY that range carries the mark.
+    const ta = page.locator('.anno-card .rte textarea').first();
+    await ta.fill('Torque 12 Nm');
+    await page.waitForTimeout(300);
+    await ta.evaluate((el) => {
+      el.focus();
+      el.setSelectionRange(7, 12); // "12 Nm"
+    });
+    const boldBtn = page.locator('.anno-card .rte-toolbar button', { hasText: /^B$/ }).first();
+    await boldBtn.click();
+    await page.waitForTimeout(400);
+    const spans = await page.evaluate(() => {
+      const st = window.__store.getState();
+      const a = st.sequence.operations
+        .flatMap((o) => o.annotations)
+        .find((x) => x.anchor.kind === 'part');
+      return a?.rich?.[0]?.map((s) => [s.text, s.marks.join(',')]) ?? null;
+    });
+    const rangeOnly = JSON.stringify(spans) === JSON.stringify([['Torque ', ''], ['12 Nm', 'bold']]);
+    record('bold applies ONLY to the selected range', rangeOnly, JSON.stringify(spans));
+    const strongInScene = await page.locator('.callout strong').count();
+    record('range bold renders in the 3D callout', strongInScene > 0);
+
     await shot('07-callout');
   } else {
-    record('callout controls reachable', false, 'no + 3D callout button found');
+    record('callout controls reachable', false, 'no + add button found');
   }
+
+  // ------------------------------------------------------- instruction note
+  // The instruction IS the on-screen note now: type one, see it in the
+  // viewport corner; the old separate 'screen note' button must be gone.
+  const instr = page.locator('.inspector .rte textarea').first();
+  await instr.fill('Wear cut-resistant gloves');
+  await page.waitForTimeout(500);
+  const noteOnScreen = await page.locator('.screen-callout').textContent().catch(() => '');
+  record('instruction renders as the corner note', /gloves/.test(noteOnScreen ?? ''),
+    noteOnScreen?.slice(0, 40) ?? 'not rendered');
+  const oldNoteBtn = await page.getByRole('button', { name: /\+ note/i }).count();
+  record('separate screen-note button removed', oldNoteBtn === 0);
+  // Corner picker: flip to bottom-right and confirm the class follows.
+  await page.locator('.corner-pick button').nth(3).click();
+  await page.waitForTimeout(400);
+  const brNote = await page.locator('.screen-callout.corner-br').count();
+  record('note corner picker moves the note', brNote === 1);
 
   // ---------------------------------------------------------------- step
   // Import a real STEP file through the UI, exercising the OpenCascade WASM

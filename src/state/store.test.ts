@@ -243,7 +243,7 @@ describe('annotations', () => {
     s().addAnnotation(id, {
       text: 'Torque to 12 Nm',
       anchor: { kind: 'world', point: [0, 0, 0] },
-      offset: [12, -12],
+      labelOffset: [24, 24, 0],
     });
     expect(s().sequence!.operations[0].annotations).toHaveLength(1);
     const aid = s().sequence!.operations[0].annotations[0].id;

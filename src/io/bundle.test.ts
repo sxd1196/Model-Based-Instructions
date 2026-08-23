@@ -29,7 +29,7 @@ const idOf = (n: string) =>
 function sequenceWithStep(): Sequence {
   const part = idOf('Cover_Plate');
   const op: Operation = {
-    id: 'op1', title: 'Lift cover', description: 'Straight up.',
+    id: 'op1', noteCorner: 'tl' as const, title: 'Lift cover', description: 'Straight up.',
     duration: 1.5, dwell: 0.4,
     tracks: [{
       id: 't1', parts: [part],

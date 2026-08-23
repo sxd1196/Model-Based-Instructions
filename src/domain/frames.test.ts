@@ -190,7 +190,7 @@ describe('REGRESSION: rotating a sub-assembly preserves its shape', () => {
 
     const sequence: Sequence = { ...emptySequence(assembly), operations: [] };
     const op = {
-      id: 'op1', title: 'Rotate cover', description: '',
+      id: 'op1', title: 'Rotate cover', description: '', noteCorner: 'tl' as const,
       duration: 1, dwell: 0,
       tracks: [] as Sequence['operations'][number]['tracks'],
       camera: null, annotations: [], styles: [], meta: {},
@@ -242,7 +242,7 @@ describe('REGRESSION: rotating a sub-assembly preserves its shape', () => {
       start: 0, end: 1, easing: 'linear' as const,
     }));
     sequence.operations.push({
-      id: 'op1', title: '', description: '', duration: 1, dwell: 0,
+      id: 'op1', title: '', description: '', noteCorner: 'tl' as const, duration: 1, dwell: 0,
       tracks, camera: null, annotations: [], styles: [], meta: {},
     });
 

@@ -38,7 +38,7 @@ function makeLargeAssembly(n: number) {
 
 function stepFor(id: string, parts: string[], z: number): Operation {
   return {
-    id, title: id, description: '', duration: 1, dwell: 0.2,
+    id, title: id, description: '', noteCorner: 'tl' as const, duration: 1, dwell: 0.2,
     tracks: [{
       id: `${id}-t`, parts,
       from: { translate: [0, 0, 0], rotate: IDENTITY_QUAT, pivot: [0, 0, 0] },

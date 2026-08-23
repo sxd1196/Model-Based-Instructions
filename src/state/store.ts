@@ -86,7 +86,7 @@ interface State {
    * When set, the next viewport click sets this annotation's leader anchor
    * instead of changing the selection.
    */
-  anchorMode: { operationId: string; annotationId: string } | null;
+  anchorMode: { operationId: string; annotationId: string; phase: 'pick' | 'pull' } | null;
 }
 
 interface Actions {
@@ -159,6 +159,8 @@ interface Actions {
   removeAnnotation: (operationId: string, annotationId: string) => void;
   /** Arm/disarm click-to-anchor for a specific callout. */
   setAnchorMode: (target: { operationId: string; annotationId: string } | null) => void;
+  /** Phase-2 drop of the pulled note: world offset (mm) from the anchor. */
+  setLabelOffsetFromPull: (offset: Vec3) => void;
   /** Called by the viewport when a snapped feature is picked in anchor mode. */
   setAnchorFromPick: (
     partId: string,
@@ -743,11 +745,14 @@ export const useStore = create<State & Actions>()(
         });
       },
 
-      setAnchorMode: (target) => set((s) => void (s.anchorMode = target)),
+      setAnchorMode: (target) =>
+        set((s) => {
+          s.anchorMode = target ? { ...target, phase: 'pick' } : null;
+        }),
 
       setAnchorFromPick: (partId, kind, local, normal) => {
         const target = get().anchorMode;
-        if (!target) return;
+        if (!target || target.phase !== 'pick') return;
 
         checkpoint('Set callout anchor');
         set((s) => {
@@ -756,7 +761,23 @@ export const useStore = create<State & Actions>()(
           );
           if (!a) return;
           a.anchor = { kind: 'part', partId, feature: { kind, local, normal } };
-          // One-shot: disarm so the next click selects normally again.
+          // Phase 2: the note follows the cursor in 3D until the next click
+          // drops it — that click sets labelOffset (world mm from anchor).
+          s.anchorMode = { ...target, phase: 'pull' };
+        });
+      },
+
+      /** Phase-2 drop: world-space offset from the anchor to the label. */
+      setLabelOffsetFromPull: (offset) => {
+        const target = get().anchorMode;
+        if (!target || target.phase !== 'pull') return;
+
+        checkpoint('Place callout label');
+        set((s) => {
+          const a = findOp(s, target.operationId)?.annotations.find(
+            (x) => x.id === target.annotationId,
+          );
+          if (a) a.labelOffset = offset;
           s.anchorMode = null;
         });
       },
