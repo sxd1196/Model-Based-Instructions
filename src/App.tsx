@@ -11,11 +11,11 @@ import { Inspector } from '@/ui/Inspector';
 import { ViewportToolbar } from '@/ui/ViewportToolbar';
 import { AxisLegend } from '@/ui/AxisLegend';
 import {
-  downloadSequence,
+  downloadBundle,
   exportInstructionsHtml,
-  readSequenceFile,
   recordCanvas,
 } from '@/io/project';
+import { openProjectJson } from '@/io/bundle';
 import { makeDemoAssembly } from '@/cad/demo';
 import './App.css';
 
@@ -100,15 +100,53 @@ export default function App() {
 
   const openProject = useCallback(
     async (file: File) => {
+      setLoading(true);
       try {
-        loadSequence(await readSequenceFile(file));
-        setWarnings(['Project loaded. Re-open the model file to see geometry.']);
+        const raw = JSON.parse(await file.text());
+        const opened = await openProjectJson(raw);
+
+        loadSequence(opened.sequence);
+
+        if (opened.scene) {
+          // Re-derive stats so the camera frames the restored model.
+          const result = buildAssemblyFromScene(
+            opened.scene, opened.sequence.assembly.modelUrl, {
+              name: opened.sequence.assembly.name,
+              sourceFile: opened.sequence.assembly.sourceFile,
+            },
+          );
+          setScene(result.scene);
+          setDiagonal(result.stats.diagonal || 200);
+          setCenter(result.stats.center);
+          setWarnings([`Project restored with geometry — ${result.stats.meshCount} meshes.`]);
+        } else {
+          setWarnings(opened.warnings);
+        }
       } catch (err) {
         setWarnings([`Invalid project file: ${(err as Error).message}`]);
+      } finally {
+        setLoading(false);
       }
     },
-    [loadSequence, setWarnings],
+    [loadSequence, setWarnings, setLoading],
   );
+
+  const saveProject = useCallback(async () => {
+    if (!sequence) return;
+    setLoading(true);
+    try {
+      const { bytes, embedded } = await downloadBundle(sequence, scene);
+      setWarnings([
+        embedded
+          ? `Saved with embedded geometry (${(bytes / 1024 / 1024).toFixed(1)} MB).`
+          : 'Saved, but geometry could not be embedded — re-open the model after loading.',
+      ]);
+    } catch (err) {
+      setWarnings([`Save failed: ${(err as Error).message}`]);
+    } finally {
+      setLoading(false);
+    }
+  }, [sequence, scene, setWarnings, setLoading]);
 
   // Keyboard: space = play/pause, ctrl+z / ctrl+shift+z = undo/redo.
   useEffect(() => {
@@ -198,7 +236,7 @@ export default function App() {
 
         <div className="spacer" />
 
-        <button className="btn" disabled={!sequence} onClick={() => sequence && downloadSequence(sequence)}>
+        <button className="btn" disabled={!sequence} onClick={saveProject}>
           Save
         </button>
         <button className="btn" disabled={!sequence} onClick={() => sequence && exportInstructionsHtml(sequence)}>

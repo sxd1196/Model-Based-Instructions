@@ -3,7 +3,9 @@ import type { Sequence } from '@/domain/schema';
 import { parseSequence } from '@/domain/schema';
 import { buildTimeline } from '@/domain/evaluate';
 import { richToHtml } from '@/domain/richtext';
+import { buildBundle } from './bundle';
 
+/** Legacy: sequence-only save. Prefer downloadBundle so geometry is kept. */
 export function downloadSequence(sequence: Sequence) {
   const blob = new Blob([JSON.stringify(sequence, null, 2)], {
     type: 'application/json',
@@ -120,3 +122,17 @@ const escapeHtml = (s: string) =>
   s.replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
   );
+
+/** Save a project WITH its geometry embedded, so reopening restores the model. */
+export async function downloadBundle(
+  sequence: Sequence,
+  scene: unknown,
+): Promise<{ bytes: number; embedded: boolean }> {
+  const bundle = await buildBundle(sequence, scene as never);
+  const json = JSON.stringify(bundle);
+  triggerDownload(
+    new Blob([json], { type: 'application/json' }),
+    `${slug(sequence.name)}.assemblyproj.json`,
+  );
+  return { bytes: json.length, embedded: Boolean(bundle.modelGlb) };
+}
