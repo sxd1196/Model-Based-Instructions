@@ -239,6 +239,44 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .vp-label { font-size: 9px; letter-spacing: .3px; text-transform: uppercase; opacity: .75; }
 .vp-mode.on .vp-label { opacity: 1; }
 
+/* ---------- lane part chips ---------- */
+.lane-again {
+  font-size: 10px; padding: 2px 8px; background: #1a2030;
+  border: 1px solid #2a3142; border-radius: 4px; color: #ffb340; cursor: pointer;
+}
+.lane-again:hover { border-color: #f08c00; }
+.lane-parts-list { flex-basis: 100%; display: flex; gap: 8px; align-items: flex-start; }
+.lane-chips { display: flex; flex-wrap: wrap; gap: 3px; max-height: 64px; overflow-y: auto; }
+.lane-part-chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: #10141d; border: 1px solid #232a38; border-radius: 4px;
+  padding: 1px 2px 1px 6px; font-size: 10px;
+}
+.lane-part-name { background: none; border: none; color: #b6bdc9; cursor: pointer; font-size: 10px; padding: 0; }
+.lane-part-name:hover { color: #ffb340; }
+.lane-part-x { background: none; border: none; color: #5a6170; cursor: pointer; font-size: 9px; padding: 0 3px; }
+.lane-part-x:hover { color: #e66; }
+
+/* ---------- popped-out viewport ---------- */
+/* Main window: viewport gone, authoring goes full width and the timeline
+   grows into the freed space — tree | lanes | inspector across the screen. */
+.body.popped { flex: 0 0 auto; min-height: 0; }
+.body.popped .left, .body.popped .right { width: 300px; min-width: 240px; }
+.body.popped .left { flex: 1 1 25%; }
+.body.popped .right { flex: 1 1 25%; }
+.bottom.expanded { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.bottom.expanded .timeline { height: 100%; display: flex; flex-direction: column; }
+.bottom.expanded .lanes { flex: 1; display: flex; flex-direction: column; }
+.bottom.expanded .lanes-scroll { max-height: none; flex: 1; }
+
+/* Child window: the viewport fills it completely. */
+.popout-root { position: fixed; inset: 0; }
+.popout-root .center.popout-fill { position: absolute; inset: 0; display: block; }
+.popin-btn {
+  position: absolute; top: 10px; right: 10px; z-index: 50;
+  background: #161b26; border: 1px solid #f08c00; color: #ffb340;
+}
+
 /* ---------- anchor placement guide ---------- */
 .anchor-guide {
   position: absolute; top: 64px; left: 50%; transform: translateX(-50%);

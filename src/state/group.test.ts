@@ -266,6 +266,80 @@ describe('updateLaneTracks / removeLaneTracks', () => {
   });
 });
 
+describe('addMotionForParts / removePartFromLane (lane membership)', () => {
+  it('move again: chains a second motion for the SAME parts without selection', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('Cover_Plate')] });
+    s().addMotionForSelection(opId);
+    // Selection cleared — the per-lane button passes parts explicitly.
+    useStore.setState({ selection: [] });
+    s().addMotionForParts(opId, [idOf('Cover_Plate')]);
+
+    const t = s().sequence!.operations[0].tracks;
+    expect(t).toHaveLength(2);
+    expect([t[0].start, t[0].end]).toEqual([0, 0.5]);
+    expect([t[1].start, t[1].end]).toEqual([0.5, 1]);
+  });
+
+  it('REGRESSION: move again on a MERGED lane compresses it as ONE unit', () => {
+    // A SUB_Cover motion is 9 cluster tracks sharing one timing window (one
+    // visual lane). The first compress implementation gave each TRACK its
+    // own window, shattering the lane into a 9-step stagger the author
+    // never wrote. Windows must be assigned per timing-group.
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('SUB_Cover')] });
+    s().addMotionForSelection(opId);
+    const parts = s().sequence!.operations[0].tracks.flatMap((t) => t.parts);
+
+    s().addMotionForParts(opId, parts);
+
+    const tracks = s().sequence!.operations[0].tracks;
+    const windows = new Set(tracks.map((t) => `${t.start.toFixed(3)}:${t.end.toFixed(3)}`));
+    // Exactly two timing windows: the original lane (0-0.5) and the new one (0.5-1).
+    expect([...windows].sort()).toEqual(['0.000:0.500', '0.500:1.000']);
+  });
+
+  it('removes one part from a lane, keeping the rest moving', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('SUB_Cover')] });
+    s().addMotionForSelection(opId);
+    const before = s().sequence!.operations[0].tracks;
+    const total = before.reduce((n, t) => n + t.parts.length, 0);
+    const victim = idOf('Bolt_M8_03_Head');
+    const ids = before.map((t) => t.id);
+
+    s().removePartFromLane(opId, ids, victim);
+
+    const after = s().sequence!.operations[0].tracks;
+    const remaining = after.flatMap((t) => t.parts);
+    expect(remaining).toHaveLength(total - 1);
+    expect(remaining).not.toContain(victim);
+  });
+
+  it('a track emptied of parts is deleted entirely', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('Cover_Plate')] });
+    s().addMotionForSelection(opId);
+    const ids = s().sequence!.operations[0].tracks.map((t) => t.id);
+
+    s().removePartFromLane(opId, ids, idOf('Cover_Plate'));
+    expect(s().sequence!.operations[0].tracks).toHaveLength(0);
+  });
+
+  it('part removal is undoable in one step', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('SUB_Cover')] });
+    s().addMotionForSelection(opId);
+    const ids = s().sequence!.operations[0].tracks.map((t) => t.id);
+    const total = s().sequence!.operations[0].tracks.reduce((n, t) => n + t.parts.length, 0);
+
+    s().removePartFromLane(opId, ids, idOf('Cover_Gasket'));
+    s().undo();
+    const restored = s().sequence!.operations[0].tracks.reduce((n, t) => n + t.parts.length, 0);
+    expect(restored).toBe(total);
+  });
+});
+
 describe('selectSubassemblyOf', () => {
   it('selects every mesh in the containing sub-assembly', () => {
     s().selectSubassemblyOf(idOf('Bolt_M8_01_Shank'));

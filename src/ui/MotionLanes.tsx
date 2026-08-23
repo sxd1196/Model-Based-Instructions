@@ -35,6 +35,9 @@ export function MotionLanes({ op }: { op: Operation }) {
   const updateLaneTracks = useStore((s) => s.updateLaneTracks);
   const removeLaneTracks = useStore((s) => s.removeLaneTracks);
   const addMotionForSelection = useStore((s) => s.addMotionForSelection);
+  const addMotionForParts = useStore((s) => s.addMotionForParts);
+  const removePartFromLane = useStore((s) => s.removePartFromLane);
+  const select = useStore((s) => s.select);
   const updateOperation = useStore((s) => s.updateOperation);
   const parkAtOperationEnd = useStore((s) => s.parkAtOperationEnd);
 
@@ -100,6 +103,10 @@ export function MotionLanes({ op }: { op: Operation }) {
               parkAtOperationEnd(op.id);
             }}
             onRemove={() => removeLaneTracks(op.id, lane.trackIds)}
+            onMoveAgain={() => addMotionForParts(op.id, lane.parts)}
+            onRemovePart={(pid) => removePartFromLane(op.id, lane.trackIds, pid)}
+            onPickPart={(pid) => select([pid])}
+            partName={nameOf}
             otherEdges={lanes
               .filter((l) => laneKey(l) !== laneKey(lane))
               .flatMap((l) => [l.start, l.end])}
@@ -118,10 +125,14 @@ interface RowProps {
   onToggle: () => void;
   onPatch: (patch: { to?: Move; start?: number; end?: number }) => void;
   onRemove: () => void;
+  onMoveAgain: () => void;
+  onRemovePart: (partId: string) => void;
+  onPickPart: (partId: string) => void;
+  partName: (partId: string) => string;
   otherEdges: number[];
 }
 
-function LaneRow({ lane, op, label, expanded, onToggle, onPatch, onRemove, otherEdges }: RowProps) {
+function LaneRow({ lane, op, label, expanded, onToggle, onPatch, onRemove, onMoveAgain, onRemovePart, onPickPart, partName, otherEdges }: RowProps) {
   const barRef = useRef<HTMLDivElement>(null);
 
   /** Drag either bar edge (or the body to slide the window). */
@@ -272,6 +283,41 @@ function LaneRow({ lane, op, label, expanded, onToggle, onPatch, onRemove, other
               />
               <span>s</span>
             </label>
+          </div>
+
+          <button
+            className="lane-again"
+            title="Add another motion for these same parts, starting where this one ends"
+            onClick={onMoveAgain}
+          >
+            ⟳ move again
+          </button>
+
+          {/* WHO is in this motion: every part, by name. Click a name to
+              select it in the viewport (amber tint shows it); ✕ removes it
+              from the lane. */}
+          <div className="lane-parts-list">
+            <span className="lane-field-label">parts ({lane.parts.length})</span>
+            <div className="lane-chips">
+              {lane.parts.map((id) => (
+                <span key={id} className="lane-part-chip">
+                  <button
+                    className="lane-part-name"
+                    title="Click to select this part in the viewport"
+                    onClick={() => onPickPart(id)}
+                  >
+                    {partName(id)}
+                  </button>
+                  <button
+                    className="lane-part-x"
+                    title="Remove this part from the motion"
+                    onClick={() => onRemovePart(id)}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       )}

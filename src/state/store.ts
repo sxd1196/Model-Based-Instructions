@@ -146,6 +146,10 @@ interface Actions {
   removeLaneTracks: (operationId: string, trackIds: string[]) => void;
   /** Typed-entry path: add an identity motion for the selection at the step tail. */
   addMotionForSelection: (operationId: string) => void;
+  /** Same, for an explicit part set — the per-lane "move again" button. */
+  addMotionForParts: (operationId: string, partIds: string[]) => void;
+  /** Drop one part from a lane; empty tracks are deleted. */
+  removePartFromLane: (operationId: string, trackIds: string[], partId: string) => void;
   removeTrack: (operationId: string, trackId: string) => void;
 
   setOperationCamera: (operationId: string, pose: CameraPose | null) => void;
@@ -628,16 +632,41 @@ export const useStore = create<State & Actions>()(
       },
 
       /**
+       * Drop ONE part out of a lane (its cluster track). The remaining parts
+       * keep the motion; a track left empty is deleted. This is how the lane
+       * membership list edits "18 parts" down to the 17 you actually meant.
+       */
+      removePartFromLane: (operationId, trackIds, partId) => {
+        checkpoint('Edit motion parts');
+        set((s) => {
+          const op = findOp(s, operationId);
+          if (!op) return;
+          for (const t of op.tracks) {
+            if (trackIds.includes(t.id)) {
+              t.parts = t.parts.filter((p) => p !== partId);
+            }
+          }
+          op.tracks = op.tracks.filter(
+            (t) => !trackIds.includes(t.id) || t.parts.length > 0,
+          );
+        });
+      },
+
+      /**
        * Add a typed motion for the selection: one track per parent cluster
        * (same shape a gizmo drag commits), defaulting to the tail of the
        * step so consecutive adds chain naturally.
        */
       addMotionForSelection: (operationId) => {
+        get().addMotionForParts(operationId, get().selection);
+      },
+
+      addMotionForParts: (operationId, partIds) => {
         const st = get();
         const sequence = st.sequence;
-        if (!sequence || !st.selection.length) return;
+        if (!sequence || !partIds.length) return;
 
-        const parts = selectableParts(sequence.assembly, st.selection);
+        const parts = selectableParts(sequence.assembly, partIds);
         if (!parts.length) return;
 
         // Start where this part-set's last lane ends, so a second motion on
@@ -658,14 +687,20 @@ export const useStore = create<State & Actions>()(
           if (tailEnd < 0.98) {
             start = tailEnd;
           } else {
-            // Recompute every overlapping lane into equal windows 0..k/(n+1),
-            // preserving their relative order; the new motion gets the rest.
-            const ordered = [...overlapping].sort((a, b) => a.start - b.start);
-            const n = ordered.length + 1;
+            // Recompute into equal windows — but per LANE, not per track. A
+            // merged lane is several cluster tracks sharing one timing
+            // window; giving each track its own window would shatter the
+            // lane into a stagger the author never wrote.
+            const windowKey = (t: Track) => `${t.start.toFixed(6)}:${t.end.toFixed(6)}`;
+            const laneKeys = [...new Set(overlapping.map(windowKey))].sort(
+              (a, b) => parseFloat(a) - parseFloat(b),
+            );
+            const n = laneKeys.length + 1;
             compress = new Map();
-            ordered.forEach((t, i) => {
-              compress!.set(t.id, [i / n, (i + 1) / n]);
-            });
+            for (const t of overlapping) {
+              const i = laneKeys.indexOf(windowKey(t));
+              compress.set(t.id, [i / n, (i + 1) / n]);
+            }
             start = (n - 1) / n;
           }
         }

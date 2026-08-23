@@ -3,7 +3,9 @@ import { useStore } from '@/state/store';
 import type { CameraPose } from '@/domain/schema';
 import { RichTextEditor } from './RichTextEditor';
 
-const CORNER_GLYPH = { tl: '◱', tr: '◲', bl: '◰', br: '◳' } as const;
+// Quadrant glyphs: ◰ U+25F0 is UPPER-left, ◱ LOWER-left, ◲ LOWER-right,
+// ◳ UPPER-right. The first mapping had top/bottom inverted (user-reported).
+const CORNER_GLYPH = { tl: '◰', tr: '◳', bl: '◱', br: '◲' } as const;
 const CORNERS = ['tl', 'tr', 'bl', 'br'] as const;
 
 export function Inspector() {

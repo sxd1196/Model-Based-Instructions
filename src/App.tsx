@@ -18,6 +18,7 @@ import {
 import { openProjectJson } from '@/io/bundle';
 import { captureStepImages } from '@/cad/captureSteps';
 import { makeDemoAssembly } from '@/cad/demo';
+import { usePopout } from '@/ui/usePopout';
 import './App.css';
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
   const [center, setCenter] = useState<[number, number, number]>([0, 0, 0]);
   const stopRecording = useRef<(() => void) | null>(null);
   const [recording, setRecording] = useState(false);
+  const viewport = usePopout(() => void 0);
 
   const sequence = useStore((s) => s.sequence);
   const warnings = useStore((s) => s.warnings);
@@ -272,6 +274,14 @@ export default function App() {
         <button className="btn" disabled={!sequence} onClick={exportDoc}>
           Export doc
         </button>
+        <button
+          className="btn"
+          disabled={!sequence || viewport.isOut}
+          title="Open the 3D viewport in its own window; this window becomes the full-width authoring surface"
+          onClick={viewport.open}
+        >
+          ⇲ Pop out 3D
+        </button>
         <button className={`btn${recording ? ' rec' : ''}`} disabled={!sequence} onClick={toggleRecord}>
           {recording ? '■ Stop' : '● Record'}
         </button>
@@ -292,34 +302,47 @@ export default function App() {
         <div className="drop-hint">Drop a .step, .glb, or project .json to open</div>
       )}
 
-      <div className="body">
+      <div className={`body${viewport.isOut ? ' popped' : ''}`}>
         <aside className="left"><AssemblyTree /></aside>
-        <main className="center">
-          {loading && <div className="overlay">Loading model…</div>}
-          {!sequence && !loading && (
-            <div className="overlay welcome">
-              <h2>Assembly Studio</h2>
-              <p>Open a <b>.glb</b> / <b>.gltf</b> assembly, or try the demo model.</p>
-              <p className="small">
-                Drop a <b>.step</b> file straight in — no conversion needed.<br />
-                Export each solid as a <b>separate named object</b> — do not merge.
-              </p>
-              <button className="btn big" onClick={openDemo}>Load demo model</button>
-            </div>
-          )}
-          <Viewport
-            scene={scene}
-            assembly={sequence?.assembly ?? null}
-            diagonal={diagonal}
-            center={center}
-          />
-          <ViewportToolbar />
-          <AxisLegend />
-        </main>
+        {viewport.portal(
+          <main className={viewport.isOut ? 'center popout-fill' : 'center'}>
+            {loading && <div className="overlay">Loading model…</div>}
+            {!sequence && !loading && (
+              <div className="overlay welcome">
+                <h2>Assembly Studio</h2>
+                <p>Open a <b>.glb</b> / <b>.gltf</b> assembly, or try the demo model.</p>
+                <p className="small">
+                  Drop a <b>.step</b> file straight in — no conversion needed.<br />
+                  Export each solid as a <b>separate named object</b> — do not merge.
+                </p>
+                <button className="btn big" onClick={openDemo}>Load demo model</button>
+              </div>
+            )}
+            <Viewport
+              scene={scene}
+              assembly={sequence?.assembly ?? null}
+              diagonal={diagonal}
+              center={center}
+            />
+            <ViewportToolbar />
+            <AxisLegend />
+            {viewport.isOut && (
+              <button
+                className="btn popin-btn"
+                title="Dock the viewport back into the main window"
+                onClick={viewport.close}
+              >
+                ⇱ Pop back in
+              </button>
+            )}
+          </main>,
+        )}
         <aside className="right"><Inspector /></aside>
       </div>
 
-      <footer className="bottom"><Timeline /></footer>
+      <footer className={`bottom${viewport.isOut ? ' expanded' : ''}`}>
+        <Timeline />
+      </footer>
     </div>
   );
 }

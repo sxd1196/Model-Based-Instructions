@@ -286,6 +286,23 @@ domain/richtext.ts split spans at textarea selection offsets (newline = 1
 char). A collapsed selection formats the whole label. RichTextEditor.tsx is
 the one shared editing surface (instruction + callouts).
 
+## Lane membership + popped-out viewport (2026-08-23)
+
+Lane expansion now lists EVERY member part as a chip: click a name to select
+that exact part in the viewport (raw select, not pickPart — the chip means
+that part, not its selection unit), ✕ removes it from the lane (empty tracks
+are deleted), and '⟳ move again' chains a new motion for the lane's own
+parts without needing a viewport selection. When the step is full, adding
+compresses windows PER LANE (per timing-group), never per track — per-track
+windows shattered a merged 9-track lane into a stagger (regression-tested).
+
+'Pop out 3D' moves the viewport <main> into a child window via a React
+portal into window.open (usePopout.tsx). Same JS context: the store, scene,
+and handlers keep working with no message passing; the WebGL context
+survives because React never unmounts the subtree. The main window becomes
+tree | expanded timeline/lanes | inspector at full width. Stylesheets are
+cloned into the child head; closing either window re-docks cleanly.
+
 ## Known limitations
 
 - ~~**Selection highlight uses `BoxHelper`**, not a true outline pass. Cheap and~~
