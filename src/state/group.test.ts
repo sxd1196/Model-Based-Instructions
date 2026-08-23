@@ -162,6 +162,15 @@ describe('commitGroupDrag', () => {
     expect(s().sequence!.operations[0].tracks).toHaveLength(CLUSTERS);
   });
 
+  it('a NO-OP click on the gizmo does not create an empty step', () => {
+    // PivotControls fires dragEnd even for a plain click on the widget; an
+    // identity drag with no active operation must leave the timeline alone.
+    // (Regression: selecting a part created an empty op on every click.)
+    expect(s().sequence!.operations).toHaveLength(0);
+    s().commitGroupDrag(boltParts(), [10, 20, 30], [10, 20, 30], IDENTITY_QUAT);
+    expect(s().sequence!.operations).toHaveLength(0);
+  });
+
   it('is undoable in one step', () => {
     s().addOperation();
     s().commitGroupDrag(boltParts(), [0, 0, 0], [0, 0, 80], IDENTITY_QUAT);

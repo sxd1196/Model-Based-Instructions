@@ -331,15 +331,18 @@ export const useStore = create<State & Actions>()(
         const sequence = state.sequence;
         if (!sequence || !partIds.length) return;
 
-        // Same reasoning as commitDrag: never discard a drag for want of a step.
-        let opId = state.activeOperationId;
-        if (!opId) opId = get().addOperation() ?? null;
-        if (!opId) return;
-
         const parts = selectableParts(sequence.assembly, partIds);
         if (!parts.length) return;
 
-        const op = get().sequence?.operations.find((o) => o.id === opId);
+        // Bail on a no-op BEFORE auto-creating a step: PivotControls fires a
+        // dragEnd even for a plain click on the widget, and an identity drag
+        // must not litter the timeline with empty operations. (Same ordering
+        // bug as commitDrag once had — the empty-op check lives up here on
+        // purpose.)
+        const opIdForLookup = state.activeOperationId;
+        const opForLookup = opIdForLookup
+          ? sequence.operations.find((o) => o.id === opIdForLookup)
+          : undefined;
 
         // ONE TRACK PER PARENT CLUSTER. The gizmo yields one WORLD transform,
         // but a Move is applied in each part's PARENT frame. Feeding the
@@ -351,7 +354,7 @@ export const useStore = create<State & Actions>()(
 
         const updates: Array<{ parts: string[]; move: Move }> = [];
         for (const cluster of clusters) {
-          const existing = op?.tracks.find(
+          const existing = opForLookup?.tracks.find(
             (t) =>
               t.parts.length === cluster.parts.length &&
               t.parts.every((p) => cluster.parts.includes(p)),
@@ -371,6 +374,12 @@ export const useStore = create<State & Actions>()(
           }
         }
         if (!updates.length) return;
+
+        // Real motion confirmed — NOW auto-create a step if none is active.
+        // (Never discard a drag for want of a step; see commitDrag.)
+        let opId = state.activeOperationId;
+        if (!opId) opId = get().addOperation() ?? null;
+        if (!opId) return;
 
         checkpoint('Drag group');
         set((s) => {
