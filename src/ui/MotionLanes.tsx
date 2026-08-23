@@ -33,6 +33,7 @@ export function MotionLanes({ op }: { op: Operation }) {
   const sequence = useStore((s) => s.sequence);
   const selection = useStore((s) => s.selection);
   const updateLaneTracks = useStore((s) => s.updateLaneTracks);
+  const beginGesture = useStore((s) => s.beginGesture);
   const removeLaneTracks = useStore((s) => s.removeLaneTracks);
   const addMotionForSelection = useStore((s) => s.addMotionForSelection);
   const addMotionForParts = useStore((s) => s.addMotionForParts);
@@ -98,10 +99,11 @@ export function MotionLanes({ op }: { op: Operation }) {
             onToggle={() =>
               setExpanded(expanded === laneKey(lane) ? null : laneKey(lane))
             }
-            onPatch={(patch) => {
-              updateLaneTracks(op.id, lane.trackIds, patch);
+            onPatch={(patch, live) => {
+              updateLaneTracks(op.id, lane.trackIds, patch, live);
               parkAtOperationEnd(op.id);
             }}
+            onGestureStart={(label) => beginGesture(label)}
             onRemove={() => removeLaneTracks(op.id, lane.trackIds)}
             onMoveAgain={() => addMotionForParts(op.id, lane.parts)}
             onRemovePart={(pid) => removePartFromLane(op.id, lane.trackIds, pid)}
@@ -123,7 +125,8 @@ interface RowProps {
   label: string;
   expanded: boolean;
   onToggle: () => void;
-  onPatch: (patch: { to?: Move; start?: number; end?: number }) => void;
+  onPatch: (patch: { to?: Move; start?: number; end?: number }, live?: boolean) => void;
+  onGestureStart: (label: string) => void;
   onRemove: () => void;
   onMoveAgain: () => void;
   onRemovePart: (partId: string) => void;
@@ -132,7 +135,7 @@ interface RowProps {
   otherEdges: number[];
 }
 
-function LaneRow({ lane, op, label, expanded, onToggle, onPatch, onRemove, onMoveAgain, onRemovePart, onPickPart, partName, otherEdges }: RowProps) {
+function LaneRow({ lane, op, label, expanded, onToggle, onPatch, onGestureStart, onRemove, onMoveAgain, onRemovePart, onPickPart, partName, otherEdges }: RowProps) {
   const barRef = useRef<HTMLDivElement>(null);
 
   /** Drag either bar edge (or the body to slide the window). */
@@ -146,20 +149,25 @@ function LaneRow({ lane, op, label, expanded, onToggle, onPatch, onRemove, onMov
       const span = lane.end - lane.start;
       const origin = { start: lane.start, end: lane.end, x: e.clientX };
 
+      // ONE undo snapshot for the whole drag; per-move patches are live.
+      // Checkpointing per pointermove buried history in micro-snapshots and
+      // made undo replay the drag twitch by twitch.
+      onGestureStart('Adjust timing');
+
       const move = (ev: PointerEvent) => {
         const df = (ev.clientX - origin.x) / rect.width;
         if (grab === 'start') {
           const v = snapEdge(Math.min(origin.start + df, lane.end - 0.02), otherEdges);
-          onPatch({ start: Math.max(0, v) });
+          onPatch({ start: Math.max(0, v) }, true);
         } else if (grab === 'end') {
           const v = snapEdge(Math.max(origin.end + df, lane.start + 0.02), otherEdges);
-          onPatch({ end: Math.min(1, v) });
+          onPatch({ end: Math.min(1, v) }, true);
         } else {
           let s = origin.start + df;
           s = Math.max(0, Math.min(s, 1 - span));
           const snapped = snapEdge(s, otherEdges, 0.02);
           const s2 = Math.abs(snapped - s) < 0.02 && snapped + span <= 1 ? snapped : s;
-          onPatch({ start: s2, end: s2 + span });
+          onPatch({ start: s2, end: s2 + span }, true);
         }
       };
       const up = () => {
@@ -169,7 +177,7 @@ function LaneRow({ lane, op, label, expanded, onToggle, onPatch, onRemove, onMov
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
     },
-    [lane, onPatch, otherEdges],
+    [lane, onPatch, onGestureStart, otherEdges],
   );
 
   const aa = quatToAxisAngle(lane.move.rotate);

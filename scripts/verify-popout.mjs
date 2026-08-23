@@ -59,8 +59,9 @@ check('3D canvas lives in the popped window', canvasInPopup >= 1, `${canvasInPop
 const canvasInMain = await page.locator('.body canvas').count();
 check('main window no longer holds the viewport', canvasInMain === 0);
 
-const expanded = await page.locator('.bottom.expanded').count();
-check('timeline panel expands in the main window', expanded === 1);
+const centerMotion = await page.locator('.center-motion .timeline').count();
+const noFooter = await page.locator('footer.bottom').count();
+check('motion panel takes the center column (no bottom strip)', centerMotion === 1 && noFooter === 0);
 
 // WebGL still ALIVE in the popup (not a dead reparented context)?
 const px = await popup.evaluate(() => {

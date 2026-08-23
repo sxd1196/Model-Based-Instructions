@@ -140,7 +140,9 @@ interface Actions {
   addTrack: (operationId: string, parts: string[], to?: Move) => void;
   updateTrack: (operationId: string, trackId: string, patch: Partial<Track>) => void;
   /** Patch every track in a merged lane at once (timing edits move together). */
-  updateLaneTracks: (operationId: string, trackIds: string[], patch: Partial<Track>) => void;
+  updateLaneTracks: (operationId: string, trackIds: string[], patch: Partial<Track>, live?: boolean) => void;
+  /** Push ONE undo snapshot for a continuous gesture (bar drag) before live edits. */
+  beginGesture: (label: string) => void;
   removeLaneTracks: (operationId: string, trackIds: string[]) => void;
   /** Typed-entry path: add an identity motion for the selection at the step tail. */
   addMotionForSelection: (operationId: string) => void;
@@ -523,8 +525,8 @@ export const useStore = create<State & Actions>()(
             id,
             title: partial.title ?? `Step ${count + 1}`,
             description: '',
-            duration: 1.5,
-            dwell: 0.4,
+            duration: 5,
+            dwell: 1,
             tracks: [],
             camera: null,
             annotations: [],
@@ -612,12 +614,29 @@ export const useStore = create<State & Actions>()(
       },
 
       /**
+       * Open a gesture: push ONE undo snapshot now. Continuous edits that
+       * follow (live=true lane patches from a bar drag) then mutate freely
+       * without checkpointing, so the WHOLE gesture is one undo step.
+       *
+       * The original bug: updateLaneTracks checkpointed on every call, and a
+       * bar drag calls it per pointermove — one drag pushed dozens of
+       * snapshots a few px apart, and undo appeared to "replay the motion"
+       * one twitch at a time instead of reverting it.
+       */
+      beginGesture: (label) => {
+        checkpoint(label);
+      },
+
+      /**
        * Patch every track in a merged LANE at once. A sub-assembly drag is
        * one visual lane over several cluster tracks; editing its timing must
        * move them together or the lane silently splits.
+       *
+       * live=true skips the checkpoint — callers doing continuous edits must
+       * open the gesture with beginGesture() first.
        */
-      updateLaneTracks: (operationId, trackIds, patch) => {
-        checkpoint('Edit motion');
+      updateLaneTracks: (operationId, trackIds, patch, live = false) => {
+        if (!live) checkpoint('Edit motion');
         set((s) => {
           const op = findOp(s, operationId);
           if (!op) return;

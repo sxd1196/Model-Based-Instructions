@@ -442,3 +442,47 @@ describe('updateAnnotation', () => {
     expect(s().sequence!.operations[0].annotations[0].text).toBe('original');
   });
 });
+
+describe('REGRESSION: undo treats a bar drag as ONE step', () => {
+  // A timing-bar drag fires updateLaneTracks per pointermove. Each call
+  // checkpointed, so one drag buried the undo stack in micro-snapshots and
+  // undo "replayed the motion" twitch by twitch instead of reverting it.
+  it('a 30-move gesture adds exactly one undo entry', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('Cover_Plate')] });
+    s().addMotionForSelection(opId);
+    const ids = s().sequence!.operations[0].tracks.map((t) => t.id);
+    const pastBefore = useStore.getState().past.length;
+
+    s().beginGesture('Adjust timing');
+    for (let i = 1; i <= 30; i++) {
+      s().updateLaneTracks(opId, ids, { start: i / 100 }, true);
+    }
+    expect(useStore.getState().past.length).toBe(pastBefore + 1);
+
+    // One undo restores the PRE-DRAG timing completely.
+    s().undo();
+    expect(s().sequence!.operations[0].tracks[0].start).toBe(0);
+  });
+
+  it('non-live lane edits still checkpoint individually', () => {
+    const opId = s().addOperation()!;
+    useStore.setState({ selection: [idOf('Cover_Plate')] });
+    s().addMotionForSelection(opId);
+    const ids = s().sequence!.operations[0].tracks.map((t) => t.id);
+    const pastBefore = useStore.getState().past.length;
+
+    s().updateLaneTracks(opId, ids, { start: 0.2 });
+    s().updateLaneTracks(opId, ids, { start: 0.4 });
+    expect(useStore.getState().past.length).toBe(pastBefore + 2);
+  });
+});
+
+describe('default step timing', () => {
+  it('new steps are 5s with 1s dwell', () => {
+    s().addOperation();
+    const op = s().sequence!.operations[0];
+    expect(op.duration).toBe(5);
+    expect(op.dwell).toBe(1);
+  });
+});

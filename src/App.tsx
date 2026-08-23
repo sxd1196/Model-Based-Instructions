@@ -304,6 +304,12 @@ export default function App() {
 
       <div className={`body${viewport.isOut ? ' popped' : ''}`}>
         <aside className="left"><AssemblyTree /></aside>
+        {/* Popped out: the motion/timeline panel takes the center column at
+            full height — assembly | motion | instruction, three full-length
+            panels. The viewport renders in its own window via the portal. */}
+        {viewport.isOut && (
+          <main className="center center-motion"><Timeline /></main>
+        )}
         {viewport.portal(
           <main className={viewport.isOut ? 'center popout-fill' : 'center'}>
             {loading && <div className="overlay">Loading model…</div>}
@@ -340,9 +346,9 @@ export default function App() {
         <aside className="right"><Inspector /></aside>
       </div>
 
-      <footer className={`bottom${viewport.isOut ? ' expanded' : ''}`}>
-        <Timeline />
-      </footer>
+      {!viewport.isOut && (
+        <footer className="bottom"><Timeline /></footer>
+      )}
     </div>
   );
 }

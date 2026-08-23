@@ -187,9 +187,9 @@ export const Operation = z.object({
   /** Which viewport corner the instruction note occupies. */
   noteCorner: z.enum(['tl', 'tr', 'bl', 'br']).default('tl'),
   /** Seconds. Real duration of the animation, not the shop-floor cycle time. */
-  duration: z.number().positive().default(1.5),
+  duration: z.number().positive().default(5),
   /** Seconds of held still-frame after the motion, for readability. */
-  dwell: z.number().min(0).default(0.4),
+  dwell: z.number().min(0).default(1),
   tracks: z.array(Track).default([]),
   /** Camera flies to this pose over the operation. Null = hold previous. */
   camera: CameraPose.nullable().default(null),

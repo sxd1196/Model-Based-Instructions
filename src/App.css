@@ -262,16 +262,19 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .lane-part-x:hover { color: #e66; }
 
 /* ---------- popped-out viewport ---------- */
-/* Main window: viewport gone, authoring goes full width and the timeline
-   grows into the freed space — tree | lanes | inspector across the screen. */
-.body.popped { flex: 0 0 auto; min-height: 0; }
+/* Main window: three full-length columns — assembly | motion | instruction.
+   The Timeline moves INTO the center column (no bottom strip). */
+.body.popped { flex: 1 1 auto; min-height: 0; }
 .body.popped .left, .body.popped .right { width: 300px; min-width: 240px; }
-.body.popped .left { flex: 1 1 25%; }
-.body.popped .right { flex: 1 1 25%; }
-.bottom.expanded { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
-.bottom.expanded .timeline { height: 100%; display: flex; flex-direction: column; }
-.bottom.expanded .lanes { flex: 1; display: flex; flex-direction: column; }
-.bottom.expanded .lanes-scroll { max-height: none; flex: 1; }
+.center-motion {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  border-left: 1px solid var(--border, #262b36);
+  border-right: 1px solid var(--border, #262b36);
+  overflow: hidden;
+}
+.center-motion .timeline { height: 100%; display: flex; flex-direction: column; }
+.center-motion .lanes { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.center-motion .lanes-scroll { max-height: none; flex: 1; overflow-y: auto; }
 
 /* Child window: the viewport fills it completely. */
 .popout-root { position: fixed; inset: 0; }
