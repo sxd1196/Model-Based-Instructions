@@ -245,7 +245,12 @@ shipped bug:
 
 ## Known limitations
 
-- **Selection highlight uses `BoxHelper`**, not a true outline pass. Cheap and
+- ~~**Selection highlight uses `BoxHelper`**, not a true outline pass. Cheap and~~
+  Replaced 2026-08-23: selection now TINTS the part amber (material swap in
+  SceneBinder, same mechanism as ghost/highlight styles). One less per-frame
+  helper to keep in sync, and unambiguous on instanced parts where a
+  wireframe box was easy to mis-attribute. Selection wins over ghost, never
+  over hidden.
   robust; a postprocessing outline would look better.
 - **Rotation has no numeric UI.** The gizmo rotates and the schema/evaluator
   fully support rotation about a pivot, but the Inspector exposes only

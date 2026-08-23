@@ -275,17 +275,17 @@ await page.screenshot({ path: '.smoke/fix-06-outline-tracks.png' });
 
 // The helper's box centre must sit near the part's NEW world position.
 const outlineGap = await page.evaluate((rest) => {
-  const centres = window.__outlineProbe;
+  const centres = window.__selectionProbe;
   if (!centres?.length) return null;
   const expectedZ = rest[2] + 150;
   return Math.abs(centres[0][2] - expectedZ);
 }, outlineInfo);
 
 if (outlineGap === null) {
-  check('orange box: helper reachable', false, 'no outline probe');
+  check('selection tint: probe reachable', false, 'no selection probe');
 } else {
-  check('ORANGE BOX FOLLOWS THE PART after a commit', outlineGap < 10,
-    'box centre is ' + outlineGap.toFixed(1) + 'mm from the moved part on Z');
+  check('SELECTION TINT FOLLOWS THE PART after a commit', outlineGap < 10,
+    'tinted mesh centre is ' + outlineGap.toFixed(1) + 'mm from the moved part on Z');
 }
 
 await browser.close();

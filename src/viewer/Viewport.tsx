@@ -1,6 +1,6 @@
 /** The 3D viewport. */
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '@/state/store';
@@ -60,7 +60,6 @@ export function Viewport({ scene, assembly, diagonal, center }: Props) {
         />
 
         <AnnotationLayer diagonal={diagonal} />
-        <SelectionOutline scene={scene} assembly={assembly} />
         <PickHandler scene={scene} assembly={assembly} />
         <DragGizmo scene={scene} assembly={assembly} />
         <OriginMarker scale={diagonal} />
@@ -206,69 +205,3 @@ function LeaderLine({
   );
 }
 
-/** Highlights selected parts with a box helper — cheap and robust. */
-function SelectionOutline({
-  scene,
-  assembly,
-}: {
-  scene: THREE.Object3D | null;
-  assembly: Assembly | null;
-}) {
-  const selection = useStore((s) => s.selection);
-  const { scene: root } = useThree();
-  const helpers = useRef<THREE.BoxHelper[]>([]);
-
-  useEffect(() => {
-    for (const h of helpers.current) {
-      root.remove(h);
-      h.dispose();
-    }
-    helpers.current = [];
-
-    if (!scene || !assembly || !selection.length) return;
-
-    const byName = new Map<string, THREE.Object3D>();
-    scene.traverse((o) => {
-      if (!byName.has(o.name)) byName.set(o.name, o);
-    });
-
-    for (const id of selection) {
-      const part = assembly.parts[id];
-      const obj = byName.get(part?.name ?? id);
-      if (!obj) continue;
-      const helper = new THREE.BoxHelper(obj, 0xffa000);
-      helper.userData.isSelectionHelper = true;
-      root.add(helper);
-      helpers.current.push(helper);
-    }
-
-    return () => {
-      for (const h of helpers.current) {
-        root.remove(h);
-        h.dispose();
-      }
-      helpers.current = [];
-    };
-  }, [selection, scene, assembly, root]);
-
-  // Re-fit every frame. A BoxHelper computes its box ONCE at construction,
-  // but SceneBinder repositions parts each frame (commits, scrubbing, undo,
-  // live drag preview), which left the orange box stranded at the part's old
-  // position — the same stale-sync bug as the gizmo handle. update() refits
-  // the helper to its object's current world transform; SceneBinder runs at
-  // an earlier priority, so the part has already moved this frame.
-  useFrame(() => {
-    for (const h of helpers.current) h.update();
-    if (import.meta.env.DEV && typeof window !== 'undefined') {
-      // Dev-only probe: outline box centres for headless verification.
-      (window as unknown as { __outlineProbe?: number[][] }).__outlineProbe =
-        helpers.current.map((h) => {
-          h.geometry.computeBoundingSphere();
-          const c = h.geometry.boundingSphere!.center;
-          return [c.x, c.y, c.z];
-        });
-    }
-  });
-
-  return null;
-}
