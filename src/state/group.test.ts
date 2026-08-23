@@ -134,11 +134,13 @@ describe('commitGroupDrag', () => {
     expect(t[0] % 25 === 0 && t[1] % 25 === 0 && t[2] % 25 === 0).toBe(false);
   });
 
-  it('is a no-op without an active operation', () => {
-    expect(() =>
-      s().commitGroupDrag(boltParts(), [0, 0, 0], [0, 0, 50], IDENTITY_QUAT),
-    ).not.toThrow();
+  it('AUTO-CREATES a step when none exists rather than discarding the drag', () => {
+    // Deliberately inverted from the original assertion — see the matching
+    // note in state/authoring.test.ts. Silently dropping a drag was the bug.
     expect(s().sequence!.operations).toHaveLength(0);
+    s().commitGroupDrag(boltParts(), [0, 0, 0], [0, 0, 50], IDENTITY_QUAT);
+    expect(s().sequence!.operations).toHaveLength(1);
+    expect(s().sequence!.operations[0].tracks).toHaveLength(1);
   });
 
   it('is undoable in one step', () => {

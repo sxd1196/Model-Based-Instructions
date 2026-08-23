@@ -10,7 +10,7 @@ import { buildAssemblyFromScene } from '@/cad/loadGltf';
 import { makeDemoAssembly } from '@/cad/demo';
 import { poseFor, resolveFrame } from '@/domain/evaluate';
 import { composePartTransform, quatFromAxisAngle } from '@/domain/transform';
-import { IDENTITY_QUAT, type Vec3 } from '@/domain/schema';
+import type { Vec3 } from '@/domain/schema';
 
 const { root, name } = makeDemoAssembly();
 const { assembly } = buildAssemblyFromScene(root, 'demo://x', { name });
@@ -97,10 +97,18 @@ describe('commitDrag', () => {
     expect(s().sequence!.operations[0].tracks).toHaveLength(0);
   });
 
-  it('is a no-op with no active operation', () => {
+  it('AUTO-CREATES a step when none exists rather than discarding the drag', () => {
+    // Changed deliberately from the original assertion, which required an
+    // active operation and made a first drag silently do nothing. That was
+    // the reported gizmo bug: no step, no feedback, no motion.
     const part = idOf('Cover_Plate');
-    expect(() => s().commitDrag(part, [0, 0, 500], IDENTITY_QUAT)).not.toThrow();
+    const rest = assembly.parts[part].restTranslate;
     expect(s().sequence!.operations).toHaveLength(0);
+
+    s().commitDrag(part, [rest[0], rest[1], rest[2] + 60], assembly.parts[part].restRotate);
+
+    expect(s().sequence!.operations).toHaveLength(1);
+    expect(s().sequence!.operations[0].tracks[0].to.translate[2]).toBeCloseTo(60);
   });
 
   it('applies grid snapping', () => {

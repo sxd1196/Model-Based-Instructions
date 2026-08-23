@@ -40,3 +40,6 @@ coverage
 *.webm
 *.assemblyproj.json
 *-instructions.html
+
+# Smoke test artifacts
+.smoke/

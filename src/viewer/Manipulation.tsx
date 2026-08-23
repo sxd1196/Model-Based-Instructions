@@ -10,6 +10,7 @@ import { TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '@/state/store';
 import { indexScene } from '@/cad/loadGltf';
+import { resolveGizmoState } from '@/domain/authoring';
 import type { Assembly } from '@/domain/schema';
 
 interface Props {
@@ -112,7 +113,6 @@ export function PickHandler({ scene, assembly }: Props) {
 export function DragGizmo({ scene, assembly }: Props) {
   const selection = useStore((s) => s.selection);
   const gizmo = useStore((s) => s.gizmo);
-  const activeOperationId = useStore((s) => s.activeOperationId);
   const commitDrag = useStore((s) => s.commitDrag);
   const commitGroupDrag = useStore((s) => s.commitGroupDrag);
   const pause = useStore((s) => s.pause);
@@ -188,15 +188,19 @@ export function DragGizmo({ scene, assembly }: Props) {
   }, [targetId, selection, commitDrag, commitGroupDrag]);
 
   const hasTarget = !!target || isGroup;
-  const active = gizmo !== 'off' && hasTarget && !!activeOperationId;
-  if (!active) return null;
+  const gizmoState = resolveGizmoState({
+    selectionCount: selection.length,
+    mode: gizmo,
+    hasSequence: !!assembly,
+  });
+  if (!gizmoState.visible || !hasTarget) return null;
 
   return (
     <>
       <primitive object={proxy.current} />
       <TransformControls
         object={proxy.current}
-        mode={gizmo}
+        mode={gizmo === 'rotate' ? 'rotate' : 'translate'}
         onMouseDown={onMouseDown}
         onMouseUp={onMouseUp}
         size={isGroup ? 1 : 0.8}

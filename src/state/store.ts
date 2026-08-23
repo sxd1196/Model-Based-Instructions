@@ -246,7 +246,11 @@ export const useStore = create<State & Actions>()(
         const sequence = state.sequence;
         if (!sequence) return;
 
-        const opId = state.activeOperationId;
+        // Auto-create a step rather than silently discarding the drag. The
+        // gizmo is visible whenever a part is selected, so a user can drag
+        // before ever clicking "+ Step"; that must do something sensible.
+        let opId = state.activeOperationId;
+        if (!opId) opId = get().addOperation() ?? null;
         if (!opId) return;
 
         const node = sequence.assembly.parts[partId];
@@ -298,13 +302,17 @@ export const useStore = create<State & Actions>()(
       commitGroupDrag: (partIds, gizmoStart, gizmoEnd, gizmoRotation) => {
         const state = get();
         const sequence = state.sequence;
-        const opId = state.activeOperationId;
-        if (!sequence || !opId || !partIds.length) return;
+        if (!sequence || !partIds.length) return;
+
+        // Same reasoning as commitDrag: never discard a drag for want of a step.
+        let opId = state.activeOperationId;
+        if (!opId) opId = get().addOperation() ?? null;
+        if (!opId) return;
 
         const parts = selectableParts(sequence.assembly, partIds);
         if (!parts.length) return;
 
-        const op = sequence.operations.find((o) => o.id === opId);
+        const op = get().sequence?.operations.find((o) => o.id === opId);
         // Reuse the track only if it drives EXACTLY this group, so dragging a
         // sub-assembly never silently rewrites an unrelated part's motion.
         const existing = op?.tracks.find(

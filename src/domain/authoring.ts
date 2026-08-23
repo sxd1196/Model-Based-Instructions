@@ -161,6 +161,48 @@ export function isIdentityMove(move: Move, epsilon = 1e-6): boolean {
   return noTranslate && noRotate;
 }
 
+// ---------------------------------------------------------------- gizmo
+
+export interface GizmoState {
+  visible: boolean;
+  /** Why the gizmo is hidden, in words a user can act on. Null when visible. */
+  reason: string | null;
+  /** True when the drag will move several parts rigidly. */
+  isGroup: boolean;
+}
+
+/**
+ * Decide whether the drag gizmo should appear, and if not, WHY.
+ *
+ * Extracted as a pure function because the original inline condition silently
+ * required an active operation: with no step created yet the gizmo rendered
+ * nothing and gave no explanation, which reads as "the app is broken".
+ *
+ * The rule now: the gizmo appears whenever something is selected and the mode
+ * is not 'off'. Committing a drag with no step creates one (see commitDrag),
+ * so there is no reason to hide the control.
+ */
+export function resolveGizmoState(args: {
+  selectionCount: number;
+  mode: 'off' | 'translate' | 'rotate';
+  hasSequence: boolean;
+}): GizmoState {
+  const { selectionCount, mode, hasSequence } = args;
+  const isGroup = selectionCount > 1;
+
+  if (!hasSequence) {
+    return { visible: false, reason: 'Load a model first', isGroup };
+  }
+  if (mode === 'off') {
+    return { visible: false, reason: 'Gizmo is off — pick translate or rotate', isGroup };
+  }
+  if (selectionCount === 0) {
+    return { visible: false, reason: 'Select a part to move it', isGroup };
+  }
+
+  return { visible: true, reason: null, isGroup };
+}
+
 // ---------------------------------------------------------------- explode
 
 /**

@@ -14,6 +14,7 @@ import {
   isIdentityMove,
   moveFromDrag,
   radialExplode,
+  resolveGizmoState,
   resolveSelectionTarget,
   selectableParts,
   snapTranslate,
@@ -224,6 +225,54 @@ describe('isIdentityMove', () => {
 
   it('treats a negated identity quaternion as identity', () => {
     expect(isIdentityMove({ translate: [0, 0, 0], rotate: [0, 0, 0, -1], pivot: [0, 0, 0] })).toBe(true);
+  });
+});
+
+describe('resolveGizmoState', () => {
+  const base = { selectionCount: 1, mode: 'translate' as const, hasSequence: true };
+
+  it('REGRESSION: shows the gizmo with no step created yet', () => {
+    // The original bug: the gizmo was gated on activeOperationId, so before
+    // clicking "+ Step" it rendered nothing and explained nothing.
+    expect(resolveGizmoState(base).visible).toBe(true);
+    expect(resolveGizmoState(base).reason).toBeNull();
+  });
+
+  it('shows for a multi-part selection and flags it as a group', () => {
+    const g = resolveGizmoState({ ...base, selectionCount: 8 });
+    expect(g.visible).toBe(true);
+    expect(g.isGroup).toBe(true);
+  });
+
+  it('hides with an actionable reason when nothing is selected', () => {
+    const g = resolveGizmoState({ ...base, selectionCount: 0 });
+    expect(g.visible).toBe(false);
+    expect(g.reason).toMatch(/select a part/i);
+  });
+
+  it('hides with a reason when the mode is off', () => {
+    const g = resolveGizmoState({ ...base, mode: 'off' });
+    expect(g.visible).toBe(false);
+    expect(g.reason).toMatch(/off/i);
+  });
+
+  it('hides with a reason when no model is loaded', () => {
+    const g = resolveGizmoState({ ...base, hasSequence: false });
+    expect(g.visible).toBe(false);
+    expect(g.reason).toMatch(/load a model/i);
+  });
+
+  it('never hides without saying why', () => {
+    const cases = [
+      { selectionCount: 0, mode: 'translate' as const, hasSequence: true },
+      { selectionCount: 1, mode: 'off' as const, hasSequence: true },
+      { selectionCount: 1, mode: 'translate' as const, hasSequence: false },
+    ];
+    for (const c of cases) {
+      const g = resolveGizmoState(c);
+      expect(g.visible).toBe(false);
+      expect(g.reason).toBeTruthy();
+    }
   });
 });
 
