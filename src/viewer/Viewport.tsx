@@ -7,6 +7,7 @@ import { useStore } from '@/state/store';
 import { resolveAnnotationPoint, resolveFrame } from '@/domain/evaluate';
 import { CameraBinder, PlaybackClock, SceneBinder } from './SceneBinder';
 import { DragGizmo, PickHandler } from './Manipulation';
+import { AxisTriad, OriginMarker } from './Orientation';
 import type { Assembly } from '@/domain/schema';
 
 interface Props {
@@ -61,6 +62,8 @@ export function Viewport({ scene, assembly, diagonal, center }: Props) {
         <SelectionOutline scene={scene} assembly={assembly} />
         <PickHandler scene={scene} assembly={assembly} />
         <DragGizmo scene={scene} assembly={assembly} />
+        <OriginMarker scale={diagonal} />
+        <AxisTriad />
         <CameraBinder controlsRef={controls} />
         <PlaybackClock />
         <CameraReporter />

@@ -8,6 +8,7 @@ import { AssemblyTree } from '@/ui/AssemblyTree';
 import { Timeline } from '@/ui/Timeline';
 import { Inspector } from '@/ui/Inspector';
 import { ViewportToolbar } from '@/ui/ViewportToolbar';
+import { AxisLegend } from '@/ui/AxisLegend';
 import {
   downloadSequence,
   exportInstructionsHtml,
@@ -185,6 +186,7 @@ export default function App() {
             center={center}
           />
           <ViewportToolbar />
+          <AxisLegend />
         </main>
         <aside className="right"><Inspector /></aside>
       </div>
