@@ -4,6 +4,6 @@
  * the bare import as an error.
  */
 declare module 'occt-import-js' {
-  const init: () => Promise<unknown>;
+  const init: (options?: { locateFile?: (path: string) => string }) => Promise<unknown>;
   export default init;
 }

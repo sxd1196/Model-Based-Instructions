@@ -114,24 +114,41 @@ interface OcctResult {
 let occtPromise: Promise<OcctModule> | null = null;
 
 /**
- * Lazily initialise the ~8MB WASM module; cached for the session.
+ * Where the browser should fetch the OCCT wasm binary from.
  *
- * occt-import-js is a UMD bundle, so the callable factory can land on
- * `default`, `default.default`, or the namespace itself depending on how the
- * bundler interops it. Node CJS and Vite ESM disagree here — hence the probe
- * rather than a fixed unwrap. Getting this wrong fails at runtime with
- * "init is not a function", which is invisible until a real import is tried.
+ * Explicit rather than sniffed. Emscripten resolves its .wasm relative to the
+ * page, which under Vite hits the SPA HTML fallback and dies with
+ * "expected magic word 00 61 73 6d, found 3c 21 64 6f" (that being `<!do`).
+ * Environment detection is unreliable here — vitest's jsdom reports a
+ * plausible http://localhost baseURI AND sets import.meta.env.DEV, so both
+ * the obvious checks misfire and send Node looking for C:\wasm\.
+ *
+ * So: the browser entry point sets this once at startup; tests leave it null
+ * and get the package's own resolution, which works fine under Node.
  */
+let wasmUrl: string | null = null;
+
+/** Call once from the browser entry point. */
+export function setOcctWasmUrl(url: string): void {
+  wasmUrl = url;
+}
+
+/** Lazily initialise the ~8MB WASM module; cached for the session. */
 async function getOcct(): Promise<OcctModule> {
   if (!occtPromise) {
     occtPromise = import('occt-import-js').then((mod) => {
+      // occt-import-js is a UMD bundle, so the callable factory can land on
+      // `default`, `default.default`, or the namespace itself depending on how
+      // the bundler interops it. Node CJS and Vite ESM disagree — hence the
+      // probe rather than a fixed unwrap. Getting this wrong fails at runtime
+      // with "init is not a function".
       const candidates = [
         (mod as unknown as Record<string, unknown>).default,
         ((mod as unknown as Record<string, Record<string, unknown>>).default ?? {}).default,
         mod as unknown,
       ];
       const factory = candidates.find((c) => typeof c === 'function') as
-        | (() => Promise<OcctModule>)
+        | ((options?: { locateFile?: (path: string) => string }) => Promise<OcctModule>)
         | undefined;
 
       if (!factory) {
@@ -141,15 +158,11 @@ async function getOcct(): Promise<OcctModule> {
         );
       }
 
-      // The Emscripten glue resolves the .wasm relative to the page, which
-      // 404s under Vite and yields "expected magic word ... found 3c 21 64 6f"
-      // (that is `<!do`, i.e. the dev server's HTML fallback). Point it at the
-      // copy in public/wasm instead. Keep public/wasm/ in sync with the
-      // installed package version — see scripts/sync-wasm.mjs.
-      return factory({
-        locateFile: (path: string) =>
-          path.endsWith('.wasm') ? '/wasm/occt-import-js.wasm' : path,
-      } as never);
+      return wasmUrl
+        ? factory({
+            locateFile: (path: string) => (path.endsWith('.wasm') ? wasmUrl! : path),
+          })
+        : factory();
     });
   }
   return occtPromise;
