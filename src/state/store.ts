@@ -10,6 +10,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type {
   Annotation,
+  AnnotationInput,
   Assembly,
   CameraPose,
   Move,
@@ -21,6 +22,7 @@ import type {
   Vec3,
 } from '@/domain/schema';
 import {
+  Annotation as AnnotationSchema,
   IDENTITY_MOVE,
   SCHEMA_VERSION,
   parseSequence,
@@ -80,6 +82,11 @@ interface State {
   axisLock: boolean;
   /** Click geometry in the viewport to select. */
   pickEnabled: boolean;
+  /**
+   * When set, the next viewport click sets this annotation's leader anchor
+   * instead of changing the selection.
+   */
+  anchorMode: { operationId: string; annotationId: string } | null;
 }
 
 interface Actions {
@@ -137,13 +144,22 @@ interface Actions {
 
   setOperationCamera: (operationId: string, pose: CameraPose | null) => void;
   setHomeCamera: (pose: CameraPose | null) => void;
-  addAnnotation: (operationId: string, a: Omit<Annotation, 'id'>) => void;
+  addAnnotation: (operationId: string, a: Omit<AnnotationInput, 'id'>) => void;
   updateAnnotation: (
     operationId: string,
     annotationId: string,
     patch: Partial<Omit<Annotation, 'id'>>,
   ) => void;
   removeAnnotation: (operationId: string, annotationId: string) => void;
+  /** Arm/disarm click-to-anchor for a specific callout. */
+  setAnchorMode: (target: { operationId: string; annotationId: string } | null) => void;
+  /** Called by the viewport when a snapped feature is picked in anchor mode. */
+  setAnchorFromPick: (
+    partId: string,
+    kind: 'vertex' | 'edge' | 'face',
+    local: Vec3,
+    normal: Vec3,
+  ) => void;
   setStyle: (operationId: string, style: PartStyle) => void;
 
   undo: () => void;
@@ -183,6 +199,7 @@ export const useStore = create<State & Actions>()(
       snap: 5,
       axisLock: true,
       pickEnabled: true,
+      anchorMode: null,
 
       loadSequence: (sequence) =>
         set((s) => {
@@ -561,7 +578,8 @@ export const useStore = create<State & Actions>()(
         checkpoint('Add annotation');
         set((s) => {
           const op = findOp(s, operationId);
-          if (op) op.annotations.push({ ...a, id: uid() });
+          // Parse so schema defaults (leader, offset) are applied.
+          if (op) op.annotations.push(AnnotationSchema.parse({ ...a, id: uid() }));
         });
       },
 
@@ -578,6 +596,24 @@ export const useStore = create<State & Actions>()(
         set((s) => {
           const op = findOp(s, operationId);
           if (op) op.annotations = op.annotations.filter((x) => x.id !== annotationId);
+        });
+      },
+
+      setAnchorMode: (target) => set((s) => void (s.anchorMode = target)),
+
+      setAnchorFromPick: (partId, kind, local, normal) => {
+        const target = get().anchorMode;
+        if (!target) return;
+
+        checkpoint('Set callout anchor');
+        set((s) => {
+          const a = findOp(s, target.operationId)?.annotations.find(
+            (x) => x.id === target.annotationId,
+          );
+          if (!a) return;
+          a.anchor = { kind: 'part', partId, feature: { kind, local, normal } };
+          // One-shot: disarm so the next click selects normally again.
+          s.anchorMode = null;
         });
       },
 

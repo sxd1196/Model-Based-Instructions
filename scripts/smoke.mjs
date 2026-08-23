@@ -148,6 +148,51 @@ try {
   record('step created', chips > 0, `${chips} chip(s)`);
   await shot('03-step');
 
+  // ---------------------------------------------------------------- callouts
+  await page.mouse.click(cx, cy);
+  await page.waitForTimeout(400);
+
+  const addCallout = page.getByRole('button', { name: /^\+ add$/i });
+  if (await addCallout.count()) {
+    await addCallout.first().click();
+    await page.waitForTimeout(500);
+
+    const cardCount = await page.locator('.anno-card').count();
+    record('callout created', cardCount > 0, `${cardCount} card(s)`);
+
+    // Rich text: toggle bold and confirm it sticks.
+    const boldBtn = page.locator('.anno-marks button', { hasText: /^B$/ }).first();
+    if (await boldBtn.count()) {
+      await boldBtn.click();
+      await page.waitForTimeout(400);
+      const isOn = await boldBtn.evaluate((el) => el.classList.contains('on'));
+      record('rich text bold toggles', isOn);
+      const strongInScene = await page.locator('.callout strong').count();
+      record('bold renders in the 3D callout', strongInScene > 0);
+    }
+
+    // Leader line toggle should be present and checked by default.
+    const leaderBox = page.locator('.leader-toggle input').first();
+    if (await leaderBox.count()) {
+      record('leader line on by default', await leaderBox.isChecked());
+    }
+
+    // Anchor placement arms, then a viewport click sets a feature anchor.
+    const anchorBtn = page.getByRole('button', { name: /place anchor/i }).first();
+    if (await anchorBtn.count()) {
+      await anchorBtn.click();
+      await page.waitForTimeout(300);
+      await page.mouse.click(cx + 40, cy - 30);
+      await page.waitForTimeout(600);
+      const featText = await page.locator('.anno-meta .feat').count();
+      record('viewport click sets a feature anchor', featText > 0,
+        featText ? await page.locator('.anno-meta .feat').first().textContent() ?? '' : 'no feature badge');
+    }
+    await shot('07-callout');
+  } else {
+    record('callout controls reachable', false, 'no + add button found');
+  }
+
   // ---------------------------------------------------------------- errors
   record('no console errors', consoleErrors.length === 0,
     consoleErrors.slice(0, 3).join(' | ') || 'clean');

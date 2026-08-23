@@ -1,5 +1,5 @@
 /** The 3D viewport. */
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -8,6 +8,7 @@ import { resolveAnnotationPoint, resolveFrame } from '@/domain/evaluate';
 import { CameraBinder, PlaybackClock, SceneBinder } from './SceneBinder';
 import { DragGizmo, PickHandler } from './Manipulation';
 import { AxisTriad, OriginMarker } from './Orientation';
+import { RichTextView } from '@/ui/RichTextView';
 import type { Assembly } from '@/domain/schema';
 
 interface Props {
@@ -58,7 +59,7 @@ export function Viewport({ scene, assembly, diagonal, center }: Props) {
           infiniteGrid={false}
         />
 
-        <AnnotationLayer />
+        <AnnotationLayer diagonal={diagonal} />
         <SelectionOutline scene={scene} assembly={assembly} />
         <PickHandler scene={scene} assembly={assembly} />
         <DragGizmo scene={scene} assembly={assembly} />
@@ -104,7 +105,9 @@ function CameraReporter() {
  * rather than per-frame React state, which would violate the no-setState-in-
  * useFrame rule (AGENTS.md §7).
  */
-function AnnotationLayer() {
+function AnnotationLayer({ diagonal }: { diagonal: number }) {
+  // Marker scales with the model so it is visible on a 5mm bolt and a 2m frame.
+  const markerSize = Math.max(diagonal * 0.004, 0.4);
   const sequence = useStore((s) => s.sequence);
   const [, force] = useState(0);
   const raf = useRef<number>(0);
@@ -134,24 +137,72 @@ function AnnotationLayer() {
         const point = resolveAnnotationPoint(sequence, frame, a);
         if (!point) return null;
 
+        const kind =
+          a.anchor.kind === 'part' ? (a.anchor.feature?.kind ?? 'origin') : 'world';
+
         return (
           <group key={a.id} position={point}>
-            {/* A small marker at the anchor so the label reads as attached. */}
+            {/* Marker at the anchor so the label reads as attached. */}
             <mesh>
-              <sphereGeometry args={[1.5, 8, 8]} />
-              <meshBasicMaterial color="#ffa000" depthTest={false} transparent opacity={0.9} />
+              <sphereGeometry args={[markerSize, 8, 8]} />
+              <meshBasicMaterial
+                color={kind === 'vertex' ? '#ffd24d' : '#ffa000'}
+                depthTest={false}
+                transparent
+                opacity={0.95}
+              />
             </mesh>
+
+            {a.leader && (
+              <LeaderLine offset={a.offset} length={markerSize * 6} />
+            )}
+
             <Html
               style={{ transform: `translate(${a.offset[0]}px, ${a.offset[1]}px)` }}
               zIndexRange={[100, 0]}
               center={false}
             >
-              <div className="callout">{a.text}</div>
+              <div className="callout">
+                <RichTextView rich={a.rich} plain={a.text} />
+              </div>
             </Html>
           </group>
         );
       })}
     </>
+  );
+}
+
+/**
+ * A short 3D stub from the anchor toward the label.
+ *
+ * A true anchor-to-label line would need per-frame screen projection; this
+ * reads as a leader at a fraction of the cost and never fights the HTML layer.
+ */
+function LeaderLine({
+  offset,
+  length,
+}: {
+  offset: [number, number];
+  length: number;
+}) {
+  const geometry = useMemo(() => {
+    const dir = new THREE.Vector3(offset[0], -offset[1], 0).normalize();
+    return new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      dir.multiplyScalar(length),
+    ]);
+  }, [offset, length]);
+
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
+  return (
+    <primitive
+      object={new THREE.Line(
+        geometry,
+        new THREE.LineBasicMaterial({ color: '#ffa000', depthTest: false, transparent: true, opacity: 0.85 }),
+      )}
+    />
   );
 }
 

@@ -11,7 +11,8 @@ import * as THREE from 'three';
 import { useStore } from '@/state/store';
 import { indexScene } from '@/cad/loadGltf';
 import { resolveGizmoState } from '@/domain/authoring';
-import type { Assembly } from '@/domain/schema';
+import { distance, liftOffSurface, snapToFeature } from '@/domain/snapping';
+import type { Assembly, Vec3 } from '@/domain/schema';
 
 interface Props {
   scene: THREE.Object3D | null;
@@ -24,12 +25,17 @@ interface Props {
  * Bound to pointerup with a movement threshold rather than click, so orbiting
  * the camera never changes the selection — that misfire is maddening when
  * authoring.
+ *
+ * In callout-anchor mode the same ray is snapped to the nearest vertex, edge
+ * midpoint, or face centre and stored as a LOCAL-frame offset on the part.
  */
 export function PickHandler({ scene, assembly }: Props) {
   const { camera, gl } = useThree();
   const pickPart = useStore((s) => s.pickPart);
   const clearSelection = useStore((s) => s.clearSelection);
   const pickEnabled = useStore((s) => s.pickEnabled);
+  const anchorMode = useStore((s) => s.anchorMode);
+  const setAnchorFromPick = useStore((s) => s.setAnchorFromPick);
 
   const index = useMemo(
     () => (scene && assembly ? indexScene(scene, assembly) : new Map()),
@@ -74,14 +80,22 @@ export function PickHandler({ scene, assembly }: Props) {
       );
 
       if (!hit) {
-        clearSelection();
+        if (!anchorMode) clearSelection();
         return;
       }
 
       const id = objToId.get(hit.object);
-      if (id) pickPart(id, { additive: e.shiftKey, deep: e.altKey });
+      if (!id) return;
+
+      if (anchorMode) {
+        const snapped = snapHitToFeature(hit);
+        if (snapped) setAnchorFromPick(id, snapped.kind, snapped.local, snapped.normal);
+        return;
+      }
+
+      pickPart(id, { additive: e.shiftKey, deep: e.altKey });
     },
-    [camera, gl, scene, objToId, pickPart, clearSelection, pickEnabled],
+    [camera, gl, scene, objToId, pickPart, clearSelection, pickEnabled, anchorMode, setAnchorFromPick],
   );
 
   useEffect(() => {
@@ -95,6 +109,45 @@ export function PickHandler({ scene, assembly }: Props) {
   }, [gl, onPointerDown, onPointerUp]);
 
   return null;
+}
+
+/**
+ * Convert a three.js intersection into a local-frame feature anchor.
+ *
+ * Local frame, not world: the anchor must stay welded to the feature as the
+ * part animates away, and a world point would immediately drift.
+ */
+function snapHitToFeature(hit: THREE.Intersection): {
+  kind: 'vertex' | 'edge' | 'face';
+  local: Vec3;
+  normal: Vec3;
+} | null {
+  const mesh = hit.object as THREE.Mesh;
+  const geom = mesh.geometry as THREE.BufferGeometry;
+  if (!geom?.attributes.position || hit.face == null) return null;
+
+  const pos = geom.attributes.position as THREE.BufferAttribute;
+  const readVertex = (i: number): Vec3 => [pos.getX(i), pos.getY(i), pos.getZ(i)];
+
+  const triangle: [Vec3, Vec3, Vec3] = [
+    readVertex(hit.face.a),
+    readVertex(hit.face.b),
+    readVertex(hit.face.c),
+  ];
+
+  // The hit point is in world space; bring it into the mesh's local frame so
+  // it is comparable with the raw position attribute.
+  const localHit = mesh.worldToLocal(hit.point.clone());
+  const snapped = snapToFeature([localHit.x, localHit.y, localHit.z], triangle);
+
+  // Lift slightly off the surface or the leader endpoint z-fights the face.
+  const size = Math.max(
+    distance(triangle[0], triangle[1]),
+    distance(triangle[1], triangle[2]),
+  );
+  const lifted = liftOffSurface(snapped.point, snapped.normal, size * 0.02);
+
+  return { kind: snapped.kind, local: lifted, normal: snapped.normal };
 }
 
 /**

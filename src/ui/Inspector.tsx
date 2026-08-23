@@ -2,6 +2,9 @@
 import { useStore } from '@/state/store';
 import type { CameraPose, Easing, Move } from '@/domain/schema';
 import { IDENTITY_QUAT } from '@/domain/schema';
+import { hasMark, richColor, setColor, syncRichToPlain, toggleMark } from '@/domain/richtext';
+
+const MARK_GLYPH = { bold: 'B', italic: 'I', underline: 'U', sup: 'x²', sub: 'x₂', code: '</>' } as const;
 
 const EASINGS: Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'step'];
 
@@ -19,11 +22,16 @@ export function Inspector() {
   const addAnnotation = useStore((s) => s.addAnnotation);
   const updateAnnotation = useStore((s) => s.updateAnnotation);
   const removeAnnotation = useStore((s) => s.removeAnnotation);
+  const setAnchorMode = useStore((s) => s.setAnchorMode);
+  const anchorMode = useStore((s) => s.anchorMode);
 
   if (!sequence) return <div className="panel-empty">No model loaded</div>;
 
   const op = sequence.operations.find((o) => o.id === activeId);
   if (!op) return <div className="panel-empty">Select or add a step</div>;
+
+  const isArmed = (annotationId: string) =>
+    anchorMode?.annotationId === annotationId;
 
   const nameOf = (id: string) => sequence.assembly.parts[id]?.name ?? id;
 
@@ -222,46 +230,89 @@ export function Inspector() {
               <input
                 value={a.text}
                 placeholder="Callout text"
-                onChange={(e) => updateAnnotation(op.id, a.id, { text: e.target.value })}
+                onChange={(e) =>
+                  updateAnnotation(op.id, a.id, {
+                    text: e.target.value,
+                    rich: syncRichToPlain(a.rich, e.target.value),
+                  })
+                }
               />
               <button onClick={() => removeAnnotation(op.id, a.id)}>✕</button>
+            </div>
+
+            {/* Formatting: applies to the whole callout. Per-span editing
+                would need a full editor; whole-label styling covers the
+                real cases (a bold warning, a superscript tolerance). */}
+            <div className="anno-marks">
+              {(['bold', 'italic', 'underline', 'sup', 'sub', 'code'] as const).map((mark) => {
+                const active = hasMark(a.rich, mark);
+                return (
+                  <button
+                    key={mark}
+                    className={active ? 'on' : ''}
+                    title={mark}
+                    onClick={() =>
+                      updateAnnotation(op.id, a.id, {
+                        rich: toggleMark(a.rich, a.text, mark),
+                      })
+                    }
+                  >
+                    {MARK_GLYPH[mark]}
+                  </button>
+                );
+              })}
+              <input
+                type="color"
+                title="Text colour"
+                value={richColor(a.rich) ?? '#dfe3ea'}
+                onChange={(e) =>
+                  updateAnnotation(op.id, a.id, {
+                    rich: setColor(a.rich, a.text, e.target.value),
+                  })
+                }
+              />
+              {a.rich && (
+                <button
+                  title="Clear formatting"
+                  onClick={() => updateAnnotation(op.id, a.id, { rich: undefined })}
+                >
+                  ⌫
+                </button>
+              )}
             </div>
 
             <div className="anno-meta">
               {a.anchor.kind === 'part' ? (
                 <span title={nameOf(a.anchor.partId)}>
                   📌 {nameOf(a.anchor.partId)}
+                  {a.anchor.feature && (
+                    <b className="feat"> · {a.anchor.feature.kind}</b>
+                  )}
                 </span>
               ) : (
                 <span>🌐 fixed point</span>
               )}
 
               <button
-                disabled={!selection.length}
-                title={selection.length ? 'Re-pin to the selected part' : 'Select a part first'}
+                className={isArmed(a.id) ? 'on' : ''}
+                title="Click a vertex, edge, or face in the viewport to anchor the leader"
                 onClick={() =>
-                  updateAnnotation(op.id, a.id, {
-                    anchor: { kind: 'part', partId: selection[0] },
-                  })
+                  setAnchorMode(
+                    isArmed(a.id) ? null : { operationId: op.id, annotationId: a.id },
+                  )
                 }
               >
-                pin to selection
+                {isArmed(a.id) ? '◉ click a feature…' : '⌖ place anchor'}
               </button>
 
-              {a.anchor.kind === 'part' && (
-                <button
-                  title="Detach: freeze at the part's rest position"
-                  onClick={() => {
-                    const partId = (a.anchor as { kind: 'part'; partId: string }).partId;
-                    const rest = sequence.assembly.parts[partId]?.restTranslate ?? [0, 0, 0];
-                    updateAnnotation(op.id, a.id, {
-                      anchor: { kind: 'world', point: [...rest] as [number, number, number] },
-                    });
-                  }}
-                >
-                  unpin
-                </button>
-              )}
+              <label className="leader-toggle" title="Draw a leader line">
+                <input
+                  type="checkbox"
+                  checked={a.leader}
+                  onChange={(e) => updateAnnotation(op.id, a.id, { leader: e.target.checked })}
+                />
+                leader
+              </label>
             </div>
 
             <div className="anno-offset">

@@ -2,6 +2,7 @@
 import type { Sequence } from '@/domain/schema';
 import { parseSequence } from '@/domain/schema';
 import { buildTimeline } from '@/domain/evaluate';
+import { richToHtml } from '@/domain/richtext';
 
 export function downloadSequence(sequence: Sequence) {
   const blob = new Blob([JSON.stringify(sequence, null, 2)], {
@@ -30,6 +31,13 @@ export function buildInstructionsHtml(sequence: Sequence): string {
     <section class="step">
       <h2><span class="num">${i + 1}</span> ${escapeHtml(e.operation.title)}</h2>
       ${e.operation.description ? `<p>${escapeHtml(e.operation.description)}</p>` : ''}
+      ${
+        e.operation.annotations.length
+          ? `<ul class="callouts">${e.operation.annotations
+              .map((a) => `<li>${richToHtml(a.rich, a.text)}</li>`)
+              .join('')}</ul>`
+          : ''
+      }
       <dl>
         <dt>Parts</dt><dd>${
           e.operation.tracks

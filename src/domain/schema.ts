@@ -79,19 +79,78 @@ export const CameraPose = z.object({
 });
 export type CameraPose = z.infer<typeof CameraPose>;
 
+/**
+ * Rich text as STRUCTURED DATA, never raw HTML.
+ *
+ * Storing HTML in a project file would mean either an injection hole in the
+ * exported work instructions or a sanitizer dependency. A closed set of marks
+ * covers what CAD annotation actually needs — Ø25, 12 N·m, M8x1.25 — and is
+ * safe by construction because the renderer only ever emits known tags.
+ */
+export const TextMark = z.enum(['bold', 'italic', 'underline', 'sup', 'sub', 'code']);
+export type TextMark = z.infer<typeof TextMark>;
+
+export const TextSpan = z.object({
+  text: z.string(),
+  marks: z.array(TextMark).default([]),
+  /** CSS colour. Restricted to hex at parse time so it cannot smuggle url(). */
+  color: z.string().regex(/^#[0-9a-fA-F]{3,8}$/).optional(),
+});
+export type TextSpan = z.infer<typeof TextSpan>;
+
+/** A paragraph is a run of spans; the array of paragraphs is the document. */
+export const RichText = z.array(z.array(TextSpan));
+export type RichText = z.infer<typeof RichText>;
+
+/** Plain string -> RichText, for migrating v1 callouts. */
+export function plainToRich(text: string): RichText {
+  return text.split('\n').map((line) => (line ? [{ text: line, marks: [] }] : []));
+}
+
+/** RichText -> plain string, for exports and accessibility labels. */
+export function richToPlain(rich: RichText): string {
+  return rich.map((para) => para.map((s) => s.text).join('')).join('\n');
+}
+
+/**
+ * Where on a part a callout's leader line attaches.
+ *
+ * Stored in the part's LOCAL frame so the anchor stays welded to the feature
+ * as the part animates away. A world-space point would drift immediately.
+ */
+export const FeatureAnchor = z.object({
+  kind: z.enum(['vertex', 'edge', 'face', 'origin']),
+  /** Local-frame position on the part. */
+  local: Vec3,
+  /** Surface normal where known; used to offset the label off the material. */
+  normal: Vec3.optional(),
+});
+export type FeatureAnchor = z.infer<typeof FeatureAnchor>;
+
 /** An HTML callout pinned to a part or a fixed world point. */
 export const Annotation = z.object({
   id: z.string(),
   text: z.string(),
+  /** Formatted text. When absent, `text` is rendered plain. */
+  rich: RichText.optional(),
   /** Anchor to a part so the label follows it, or to a world point. */
   anchor: z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('part'), partId: z.string() }),
+    z.object({
+      kind: z.literal('part'),
+      partId: z.string(),
+      /** Attach point on the part. Omitted means the part origin. */
+      feature: FeatureAnchor.optional(),
+    }),
     z.object({ kind: z.literal('world'), point: Vec3 }),
   ]),
   /** Screen-space nudge in px so labels don't sit on top of the geometry. */
   offset: z.tuple([z.number(), z.number()]).default([12, -12]),
+  /** Draw a line from the anchor to the label. */
+  leader: z.boolean().default(true),
 });
 export type Annotation = z.infer<typeof Annotation>;
+/** What a caller must supply to create an annotation; defaults fill the rest. */
+export type AnnotationInput = z.input<typeof Annotation>;
 
 /**
  * Visibility / appearance overrides that apply for the duration of an operation.
@@ -157,7 +216,15 @@ export const Assembly = z.object({
 });
 export type Assembly = z.infer<typeof Assembly>;
 
-export const SCHEMA_VERSION = 1;
+/**
+ * Schema version history:
+ *   1 — initial
+ *   2 — Annotation gains `rich` (structured formatting), `leader`, and an
+ *       optional per-part `feature` attach point for leader lines.
+ *       v1 files migrate cleanly: plain `text` is preserved verbatim and
+ *       leaders default on.
+ */
+export const SCHEMA_VERSION = 2;
 
 export const Sequence = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION).default(SCHEMA_VERSION),
@@ -173,7 +240,28 @@ export const Sequence = z.object({
 });
 export type Sequence = z.infer<typeof Sequence>;
 
+/**
+ * Bring an older document up to the current schema.
+ *
+ * Runs BEFORE validation, so it works on raw JSON. Keep each step small and
+ * additive; saved projects must keep opening (AGENTS.md §2.7).
+ */
+export function migrate(raw: unknown): unknown {
+  if (typeof raw !== 'object' || raw === null) return raw;
+  const doc = { ...(raw as Record<string, unknown>) };
+  const version = typeof doc.schemaVersion === 'number' ? doc.schemaVersion : 1;
+
+  // v1 -> v2: annotations gain rich/leader/feature. Nothing to rewrite —
+  // the new fields are optional or defaulted — but stamp the version so the
+  // literal check passes.
+  if (version < 2) {
+    doc.schemaVersion = 2;
+  }
+
+  return doc;
+}
+
 /** Parse + migrate an unknown blob into a valid Sequence, or throw. */
 export function parseSequence(raw: unknown): Sequence {
-  return Sequence.parse(raw);
+  return Sequence.parse(migrate(raw));
 }

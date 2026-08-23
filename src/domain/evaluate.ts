@@ -306,7 +306,8 @@ export function partPositionAt(
 
 /**
  * Resolve an annotation's anchor to a concrete point at the current time.
- * World anchors pass through; part anchors follow the animated part.
+ * World anchors pass through; part anchors follow the animated part, including
+ * an optional local-frame feature offset (vertex/edge/face attach point).
  */
 export function resolveAnnotationPoint(
   sequence: Sequence,
@@ -314,7 +315,42 @@ export function resolveAnnotationPoint(
   annotation: Annotation,
 ): Vec3 | null {
   if (annotation.anchor.kind === 'world') return annotation.anchor.point;
-  return partPositionAt(sequence, frame, annotation.anchor.partId);
+
+  const { partId, feature } = annotation.anchor;
+  const node = sequence.assembly.parts[partId];
+  if (!node) return null;
+
+  // No feature: the part origin is the anchor.
+  if (!feature) return partPositionAt(sequence, frame, partId);
+
+  // A feature point lives in the part's LOCAL frame, so it must be rotated by
+  // the authored rotation before being added to the part's animated position.
+  // Skipping this makes the anchor slide off the geometry the moment a part
+  // rotates, which is exactly what a leader line must never do.
+  const move = poseFor(frame, partId);
+  const spunLocal = rotateVec3(feature.local, move.rotate);
+  const origin = partPositionAt(sequence, frame, partId);
+  if (!origin) return null;
+
+  return [
+    origin[0] + spunLocal[0],
+    origin[1] + spunLocal[1],
+    origin[2] + spunLocal[2],
+  ];
+}
+
+/** Rotate a vector by a quaternion (XYZW). Inlined to keep domain/ dependency-free. */
+function rotateVec3(v: Vec3, q: Quat): Vec3 {
+  const [x, y, z] = v;
+  const [qx, qy, qz, qw] = q;
+  const tx = 2 * (qy * z - qz * y);
+  const ty = 2 * (qz * x - qx * z);
+  const tz = 2 * (qx * y - qy * x);
+  return [
+    x + qw * tx + (qy * tz - qz * ty),
+    y + qw * ty + (qz * tx - qx * tz),
+    z + qw * tz + (qx * ty - qy * tx),
+  ];
 }
 
 export { IDENTITY_MOVE, IDENTITY_QUAT, ZERO_VEC };

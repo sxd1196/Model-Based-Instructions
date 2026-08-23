@@ -6,12 +6,15 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  Annotation,
   IDENTITY_QUAT,
   Move,
   Operation,
   SCHEMA_VERSION,
   Track,
   parseSequence,
+  plainToRich,
+  richToPlain,
 } from './schema';
 
 const minimalAssembly = {
@@ -90,7 +93,10 @@ describe('validation', () => {
   });
 
   it('rejects a future schema version rather than misreading it', () => {
-    expect(() => parseSequence({ ...minimalSequence, schemaVersion: 2 })).toThrow();
+    // Uses SCHEMA_VERSION + 1 so this stays correct across version bumps.
+    expect(() =>
+      parseSequence({ ...minimalSequence, schemaVersion: SCHEMA_VERSION + 1 }),
+    ).toThrow();
   });
 
   it('rejects an annotation with an unknown anchor kind', () => {
@@ -111,6 +117,138 @@ describe('validation', () => {
       ],
     });
     expect(o.annotations).toHaveLength(2);
+  });
+});
+
+describe('v1 -> v2 migration', () => {
+  /** A realistic v1 project: plain-text callouts, no rich/leader/feature. */
+  const v1 = {
+    schemaVersion: 1,
+    id: 's1',
+    name: 'Legacy teardown',
+    intent: 'disassembly',
+    units: 'mm',
+    assembly: minimalAssembly,
+    operations: [
+      {
+        id: 'op1',
+        title: 'Remove bolts',
+        description: 'Star pattern.',
+        duration: 1.5,
+        dwell: 0.4,
+        tracks: [{ id: 't', parts: ['p1'], to: { translate: [0, 0, 120] } }],
+        camera: null,
+        annotations: [
+          { id: 'a1', text: 'Torque 12 Nm', anchor: { kind: 'part', partId: 'p1' }, offset: [12, -12] },
+          { id: 'a2', text: 'Fixed note', anchor: { kind: 'world', point: [1, 2, 3] }, offset: [0, 0] },
+        ],
+        styles: [],
+        meta: { torque: '12 Nm' },
+      },
+    ],
+    homeCamera: null,
+  };
+
+  it('opens a v1 project without error', () => {
+    expect(() => parseSequence(v1)).not.toThrow();
+  });
+
+  it('stamps the current schema version', () => {
+    expect(parseSequence(v1).schemaVersion).toBe(SCHEMA_VERSION);
+  });
+
+  it('preserves v1 callout text verbatim', () => {
+    const annos = parseSequence(v1).operations[0].annotations;
+    expect(annos[0].text).toBe('Torque 12 Nm');
+    expect(annos[1].text).toBe('Fixed note');
+  });
+
+  it('defaults leader lines ON for migrated callouts', () => {
+    expect(parseSequence(v1).operations[0].annotations[0].leader).toBe(true);
+  });
+
+  it('leaves rich and feature undefined rather than inventing them', () => {
+    const a = parseSequence(v1).operations[0].annotations[0];
+    expect(a.rich).toBeUndefined();
+    expect(a.anchor.kind === 'part' && a.anchor.feature).toBeUndefined();
+  });
+
+  it('preserves motion and meta through migration', () => {
+    const op = parseSequence(v1).operations[0];
+    expect(op.tracks[0].to.translate).toEqual([0, 0, 120]);
+    expect(op.meta.torque).toBe('12 Nm');
+  });
+
+  it('a document with no schemaVersion is treated as v1', () => {
+    const { schemaVersion, ...noVersion } = v1;
+    expect(parseSequence(noVersion).schemaVersion).toBe(SCHEMA_VERSION);
+  });
+
+  it('migration is idempotent', () => {
+    const once = parseSequence(v1);
+    const twice = parseSequence(JSON.parse(JSON.stringify(once)));
+    expect(twice).toEqual(once);
+  });
+});
+
+describe('rich text', () => {
+  it('round-trips plain <-> rich', () => {
+    const rich = plainToRich('Torque to 12 N·m\nUse T-30 Torx');
+    expect(richToPlain(rich)).toBe('Torque to 12 N·m\nUse T-30 Torx');
+  });
+
+  it('accepts marks and hex colours', () => {
+    const a = Annotation.parse({
+      id: 'a', text: 'Ø25', anchor: { kind: 'world', point: [0, 0, 0] },
+      rich: [[
+        { text: 'Ø25 ', marks: ['bold'] },
+        { text: 'H7', marks: ['sup'], color: '#ff8800' },
+      ]],
+    });
+    expect(a.rich?.[0][1].marks).toEqual(['sup']);
+    expect(a.rich?.[0][1].color).toBe('#ff8800');
+  });
+
+  it('rejects an unknown mark', () => {
+    expect(() => Annotation.parse({
+      id: 'a', text: 'x', anchor: { kind: 'world', point: [0, 0, 0] },
+      rich: [[{ text: 'x', marks: ['blink'] }]],
+    })).toThrow();
+  });
+
+  it('rejects a non-hex colour so CSS cannot be smuggled in', () => {
+    // e.g. url(javascript:...) or expression(...) in a colour field.
+    expect(() => Annotation.parse({
+      id: 'a', text: 'x', anchor: { kind: 'world', point: [0, 0, 0] },
+      rich: [[{ text: 'x', color: 'url(evil)' }]],
+    })).toThrow();
+  });
+});
+
+describe('feature anchors', () => {
+  it('accepts a vertex anchor with a normal', () => {
+    const a = Annotation.parse({
+      id: 'a', text: 'corner',
+      anchor: {
+        kind: 'part', partId: 'p1',
+        feature: { kind: 'vertex', local: [10, 0, 5], normal: [0, 0, 1] },
+      },
+    });
+    expect(a.anchor.kind === 'part' && a.anchor.feature?.kind).toBe('vertex');
+  });
+
+  it('rejects an unknown feature kind', () => {
+    expect(() => Annotation.parse({
+      id: 'a', text: 'x',
+      anchor: { kind: 'part', partId: 'p1', feature: { kind: 'hole', local: [0, 0, 0] } },
+    })).toThrow();
+  });
+
+  it('feature is optional — the part origin is the default anchor', () => {
+    const a = Annotation.parse({
+      id: 'a', text: 'x', anchor: { kind: 'part', partId: 'p1' },
+    });
+    expect(a.anchor.kind === 'part' && a.anchor.feature).toBeUndefined();
   });
 });
 

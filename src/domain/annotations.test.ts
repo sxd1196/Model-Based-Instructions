@@ -11,7 +11,7 @@ import { quatFromAxisAngle } from './transform';
 import { buildAssemblyFromScene } from '@/cad/loadGltf';
 import { makeDemoAssembly } from '@/cad/demo';
 import { emptySequence } from '@/state/store';
-import { IDENTITY_QUAT, type Annotation, type Operation, type Sequence } from './schema';
+import { Annotation as Annotation_, IDENTITY_QUAT, type Annotation, type Operation, type Sequence } from './schema';
 
 const { root, name } = makeDemoAssembly();
 const { assembly } = buildAssemblyFromScene(root, 'demo://x', { name });
@@ -86,11 +86,11 @@ describe('partPositionAt', () => {
 });
 
 describe('resolveAnnotationPoint', () => {
-  const worldAnno: Annotation = {
+  const worldAnno: Annotation = Annotation_.parse({
     id: 'a', text: 'fixed',
     anchor: { kind: 'world', point: [10, 20, 30] },
     offset: [12, -12],
-  };
+  });
 
   it('passes world anchors through unchanged', () => {
     const s = seqWith([]);
@@ -102,11 +102,11 @@ describe('resolveAnnotationPoint', () => {
     // at the origin regardless of where the part was.
     const id = idOf('Cover_Plate');
     const rest = assembly.parts[id].restTranslate;
-    const anno: Annotation = {
+    const anno: Annotation = Annotation_.parse({
       id: 'a', text: 'Lift cover',
       anchor: { kind: 'part', partId: id },
       offset: [12, -12],
-    };
+    });
     const s = seqWith([{ ...slide(id, 90), annotations: [anno] }]);
 
     const start = resolveAnnotationPoint(s, resolveFrame(s, 0), anno)!;
@@ -119,22 +119,22 @@ describe('resolveAnnotationPoint', () => {
 
   it('is never pinned at the origin for a part with a non-zero rest pose', () => {
     const id = idOf('Cover_Plate');
-    const anno: Annotation = {
+    const anno: Annotation = Annotation_.parse({
       id: 'a', text: 'x',
       anchor: { kind: 'part', partId: id },
       offset: [0, 0],
-    };
+    });
     const s = seqWith([]);
     const p = resolveAnnotationPoint(s, resolveFrame(s, 0), anno)!;
     expect(Math.hypot(...p)).toBeGreaterThan(0);
   });
 
   it('returns null when the anchored part no longer exists', () => {
-    const anno: Annotation = {
+    const anno: Annotation = Annotation_.parse({
       id: 'a', text: 'orphan',
       anchor: { kind: 'part', partId: 'deleted-part' },
       offset: [0, 0],
-    };
+    });
     const s = seqWith([]);
     expect(resolveAnnotationPoint(s, resolveFrame(s, 0), anno)).toBeNull();
   });
@@ -142,11 +142,11 @@ describe('resolveAnnotationPoint', () => {
   it('follows a part through accumulated earlier operations', () => {
     const id = idOf('Cover_Plate');
     const rest = assembly.parts[id].restTranslate;
-    const anno: Annotation = {
+    const anno: Annotation = Annotation_.parse({
       id: 'a', text: 'later',
       anchor: { kind: 'part', partId: id },
       offset: [0, 0],
-    };
+    });
     const s = seqWith([
       { ...slide(id, 40), id: 'op1' },
       { ...slide(idOf('Main_Shaft'), 10), id: 'op2', annotations: [anno] },

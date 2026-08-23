@@ -159,6 +159,23 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
   max-width: 110px;
 }
 .anno-meta button { font-size: 10px; padding: 2px 6px; }
+.anno-meta button.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.anno-meta .feat { color: var(--accent); font-weight: 600; }
+.leader-toggle { display: flex; align-items: center; gap: 3px; font-size: 10px; cursor: pointer; }
+.leader-toggle input { width: auto; margin: 0; }
+.anno-marks {
+  display: flex; align-items: center; gap: 3px; flex-wrap: wrap; margin-top: 6px;
+}
+.anno-marks button {
+  font-size: 11px; padding: 2px 6px; min-width: 24px;
+  background: var(--panel); border-color: var(--line);
+}
+.anno-marks button.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.anno-marks input[type="color"] {
+  width: 26px; height: 22px; padding: 1px; cursor: pointer; background: var(--panel);
+}
+.rt-para { min-height: 1em; }
+.rt-para code { font-family: ui-monospace, monospace; font-size: .92em; }
 .anno-offset {
   display: flex; align-items: center; gap: 5px; margin-top: 6px;
   font-size: 11px; color: var(--muted);
