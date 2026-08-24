@@ -60,6 +60,12 @@ so it is not blocked architecturally.
 **PLM integration.** Enterprise plumbing. Would need a real user with a real
 Teamcenter/Windchill instance to design against.
 
+## In progress (feature/sequence-planner)
+
+- **Sequence planner v1**: shipped on the branch — kernel, peel, draft,
+  import opt-in, per-step review. Next: assembly-order flip (v2), rotation
+  extraction, worker offload for big assemblies.
+
 ## Backlogged (user-approved, not scheduled)
 
 - **Rev survival / model update**: reconcile an authored sequence against a

@@ -87,6 +87,18 @@ interface State {
    * instead of changing the selection.
    */
   anchorMode: { operationId: string; annotationId: string; phase: 'pick' | 'pull' } | null;
+  /**
+   * Sequence-planner draft review. While non-null, the current sequence's
+   * operations ARE the draft (playable/scrubbable with zero special
+   * rendering), a banner explains it is NOT final until accepted, and each
+   * step carries approve/reject. Accept keeps approved steps and clears the
+   * flag; discard empties the sequence.
+   */
+  draftReview: {
+    /** op id -> 'pending' | 'approved' | 'rejected' */
+    verdicts: Record<string, 'pending' | 'approved' | 'rejected'>;
+    unplannedOpIds: string[];
+  } | null;
 }
 
 interface Actions {
@@ -179,6 +191,14 @@ interface Actions {
 
   /** Return all components to their original (rest) positions. */
   goHome: () => void;
+  /** Install a planner draft for review (replaces current operations). */
+  beginDraftReview: (operations: Operation[], unplannedOpIds: string[]) => void;
+  /** Per-step verdict during review. */
+  setDraftVerdict: (opId: string, verdict: 'approved' | 'rejected' | 'pending') => void;
+  /** Keep approved+pending steps, drop rejected, exit review. */
+  acceptDraft: () => void;
+  /** Throw the whole draft away; empty sequence remains. */
+  discardDraft: () => void;
   /** Return the SELECTED parts to home by clearing their motion in the active step. */
   goHomeSelection: () => void;
   undo: () => void;
@@ -217,6 +237,7 @@ export const useStore = create<State & Actions>()(
       axisLock: true,
       pickEnabled: true,
       anchorMode: null,
+      draftReview: null,
 
       loadSequence: (sequence) =>
         set((s) => {
@@ -877,6 +898,56 @@ export const useStore = create<State & Actions>()(
           s.time = 0;
           s.playing = false;
         }),
+
+      beginDraftReview: (operations, unplannedOpIds) => {
+        checkpoint('Install draft sequence');
+        set((s) => {
+          if (!s.sequence) return;
+          s.sequence.operations = operations;
+          const verdicts: Record<string, 'pending' | 'approved' | 'rejected'> = {};
+          for (const op of operations) verdicts[op.id] = 'pending';
+          s.draftReview = { verdicts, unplannedOpIds };
+          s.activeOperationId = operations[0]?.id ?? null;
+          s.time = 0;
+          s.playing = false;
+        });
+      },
+
+      setDraftVerdict: (opId, verdict) =>
+        set((s) => {
+          if (s.draftReview) s.draftReview.verdicts[opId] = verdict;
+        }),
+
+      acceptDraft: () => {
+        const review = get().draftReview;
+        if (!review) return;
+        checkpoint('Accept draft sequence');
+        set((s) => {
+          if (!s.sequence) return;
+          // Rejected steps drop out; approved AND pending stay — accepting
+          // the draft is consent for everything you didn't explicitly kill.
+          s.sequence.operations = s.sequence.operations.filter(
+            (o) => review.verdicts[o.id] !== 'rejected',
+          );
+          s.draftReview = null;
+          s.activeOperationId = s.sequence.operations[0]?.id ?? null;
+          s.time = 0;
+          s.playing = false;
+        });
+      },
+
+      discardDraft: () => {
+        if (!get().draftReview) return;
+        checkpoint('Discard draft sequence');
+        set((s) => {
+          if (!s.sequence) return;
+          s.sequence.operations = [];
+          s.draftReview = null;
+          s.activeOperationId = null;
+          s.time = 0;
+          s.playing = false;
+        });
+      },
 
       /**
        * Send the SELECTED parts home: remove their motion from the active

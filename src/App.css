@@ -239,6 +239,67 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .vp-label { font-size: 9px; letter-spacing: .3px; text-transform: uppercase; opacity: .75; }
 .vp-mode.on .vp-label { opacity: 1; }
 
+/* ---------- import options dialog ---------- */
+.import-dialog-backdrop {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(6, 8, 12, .6); display: flex;
+  align-items: center; justify-content: center;
+}
+.import-dialog {
+  width: 440px; background: var(--panel, #12151d);
+  border: 1px solid var(--line, #262b36); border-radius: 10px;
+  padding: 18px 20px;
+}
+.import-dialog h3 { margin: 0 0 4px; }
+.import-opt {
+  display: flex; gap: 10px; align-items: flex-start;
+  margin: 14px 0; cursor: pointer;
+}
+.import-opt input { margin-top: 3px; }
+.import-opt-title { font-weight: 600; font-size: 13px; }
+.import-opt-hint { font-size: 11px; color: #9aa3b5; margin-top: 2px; line-height: 1.45; }
+.import-dialog-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+
+/* ---------- draft review banner ---------- */
+.draft-banner {
+  background: #1a1408; border-bottom: 2px solid #f08c00;
+  padding: 8px 12px 6px; max-height: 220px; display: flex; flex-direction: column;
+}
+.draft-head { display: flex; align-items: center; gap: 12px; }
+.draft-tag {
+  background: #f08c00; color: #1a1200; font-weight: 700; font-size: 11px;
+  letter-spacing: .4px; padding: 2px 8px; border-radius: 4px;
+}
+.draft-summary { font-size: 12px; color: #e8c98a; }
+.draft-accept {
+  background: #1d3a1d; border: 1px solid #3f7d3f; color: #9fdf9f;
+  padding: 4px 12px; border-radius: 5px; font-weight: 600;
+}
+.draft-discard {
+  background: #3a1d1d; border: 1px solid #7d3f3f; color: #df9f9f;
+  padding: 4px 10px; border-radius: 5px;
+}
+.draft-steps { overflow-y: auto; margin-top: 6px; }
+.draft-step {
+  display: grid; grid-template-columns: 26px minmax(180px, 240px) 1fr 60px;
+  gap: 8px; align-items: center; padding: 2px 6px; font-size: 11px;
+  border-radius: 4px; cursor: pointer;
+}
+.draft-step:hover { background: rgba(255, 255, 255, .04); }
+.draft-step.active { background: rgba(240, 140, 0, .12); }
+.draft-step.approved .draft-step-title { color: #9fdf9f; }
+.draft-step.rejected .draft-step-title { color: #7d5a5a; text-decoration: line-through; }
+.draft-step.unplanned .draft-step-title { color: #dfb35a; }
+.draft-step-index { color: #7d8596; text-align: right; }
+.draft-step-reason { color: #7d8596; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-step-actions { display: flex; gap: 4px; }
+.draft-step-actions button {
+  background: none; border: 1px solid #2a3142; border-radius: 4px;
+  color: #9aa3b5; font-size: 10px; padding: 1px 6px; cursor: pointer;
+}
+.draft-step-actions button.on { border-color: #3f7d3f; color: #9fdf9f; }
+.draft-step-actions button.on.rej { border-color: #7d3f3f; color: #df9f9f; }
+
 /* ---------- transport extras ---------- */
 .home-btn { white-space: nowrap; }
 .transport button:disabled { opacity: .35; cursor: default; }

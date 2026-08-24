@@ -547,3 +547,50 @@ describe('section cuts (v5)', () => {
     expect(parsed.operations[0].section).toEqual(s().sequence!.operations[0].section);
   });
 });
+
+describe('draft review lifecycle', () => {
+  const fakeDraft = () => {
+    const mk = (title: string) => ({
+      id: crypto.randomUUID(), title, description: 'Remove x — straight up.',
+      noteCorner: 'tl' as const, duration: 5, dwell: 1, tracks: [], camera: null,
+      annotations: [], styles: [], meta: { plannedBy: 'sequence-planner-v1', planReason: 'test' },
+      section: null,
+    });
+    return [mk('s1'), mk('s2'), mk('s3')];
+  };
+
+  it('install -> all steps pending, sequence holds the draft', () => {
+    const ops = fakeDraft();
+    s().beginDraftReview(ops, []);
+    expect(useStore.getState().draftReview).not.toBeNull();
+    expect(Object.values(useStore.getState().draftReview!.verdicts)).toEqual(['pending', 'pending', 'pending']);
+    expect(s().sequence!.operations).toHaveLength(3);
+  });
+
+  it('accept keeps approved+pending, drops rejected, exits review', () => {
+    const ops = fakeDraft();
+    s().beginDraftReview(ops, []);
+    s().setDraftVerdict(ops[1].id, 'rejected');
+    s().setDraftVerdict(ops[2].id, 'approved');
+    s().acceptDraft();
+    const st = useStore.getState();
+    expect(st.draftReview).toBeNull();
+    expect(st.sequence!.operations.map((o) => o.title)).toEqual(['s1', 's3']);
+  });
+
+  it('discard empties the sequence and exits review', () => {
+    s().beginDraftReview(fakeDraft(), []);
+    s().discardDraft();
+    const st = useStore.getState();
+    expect(st.draftReview).toBeNull();
+    expect(st.sequence!.operations).toHaveLength(0);
+  });
+
+  it('accept and discard are both undoable', () => {
+    const ops = fakeDraft();
+    s().beginDraftReview(ops, []);
+    s().discardDraft();
+    s().undo();
+    expect(s().sequence!.operations).toHaveLength(3);
+  });
+});

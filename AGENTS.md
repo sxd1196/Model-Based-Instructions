@@ -14,9 +14,9 @@ multi-level CAD models with hundreds of components.
 **In scope today:** manual authoring. You pick parts, say where they move, when, and
 what the camera does. Export to interactive playback, printable work instructions, or video.
 
-**Explicitly out of scope today:** automatic sequence inference, collision detection,
-physics. See §9 — the architecture leaves a seam for these, but do not build them
-speculatively.
+**In scope as of feature/sequence-planner:** automatic sequence DRAFTING —
+opt-in at import, geometric peel, human approves every step. Physics and
+full collision-checked motion remain out of scope.
 
 ---
 
@@ -67,6 +67,8 @@ the mess this section exists to prevent.
 ```
 src/
   domain/     Pure data model + evaluator. NO renderer imports. The heart.
+  planner/    Sequence planner: geometric feasibility + peel + draft. May
+              import three (BVH math) and domain/; never ui/ or state/.
   cad/        Loading geometry, extracting assembly trees, export validation.
   state/      Zustand store. Authoring state ONLY, never derived render state.
   viewer/     three.js / R3F. Everything WebGL lives here and nowhere else.

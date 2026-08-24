@@ -267,6 +267,15 @@ try {
     record('STEP file imports via the UI', stepRows > 0, `${stepRows} rows`);
     record('STEP solids keep their names', stepNames.some((n) => /Block/i.test(n)),
       stepNames.slice(0, 4).join(', '));
+    // Dismiss the post-import options dialog (planner opt-in) so later
+    // sections can interact with the app again.
+    const dlg = page.locator('.import-dialog');
+    if (await dlg.count()) {
+      await page.getByRole('button', { name: /start from scratch/i }).click();
+      await page.waitForTimeout(300);
+    }
+    record('import options dialog appears for real CAD and dismisses cleanly',
+      (await page.locator('.import-dialog').count()) === 0);
     await shot('08-step-import');
   }
 

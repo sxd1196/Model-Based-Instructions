@@ -19,6 +19,9 @@ import { openProjectJson } from '@/io/bundle';
 import { captureStepImages } from '@/cad/captureSteps';
 import { makeDemoAssembly } from '@/cad/demo';
 import { usePopout } from '@/ui/usePopout';
+import { ImportOptionsDialog } from '@/ui/ImportOptionsDialog';
+import { DraftReviewBanner } from '@/ui/DraftReviewBanner';
+import type { Assembly } from '@/domain/schema';
 import './App.css';
 
 export default function App() {
@@ -27,6 +30,9 @@ export default function App() {
   const [center, setCenter] = useState<[number, number, number]>([0, 0, 0]);
   const stopRecording = useRef<(() => void) | null>(null);
   const [recording, setRecording] = useState(false);
+  const [importOptions, setImportOptions] = useState<{
+    modelName: string; partCount: number; assembly: Assembly; scene: THREE.Object3D;
+  } | null>(null);
   const viewport = usePopout(() => void 0);
 
   const sequence = useStore((s) => s.sequence);
@@ -41,7 +47,7 @@ export default function App() {
   const togglePlay = useStore((s) => s.togglePlay);
 
   const ingest = useCallback(
-    (root: THREE.Group, url: string, name: string, sourceFile: string) => {
+    (root: THREE.Group, url: string, name: string, sourceFile: string, opts?: { skipDialog?: boolean }) => {
       const result = buildAssemblyFromScene(root, url, { name, sourceFile });
       setScene(result.scene);
       setDiagonal(result.stats.diagonal || 200);
@@ -51,8 +57,46 @@ export default function App() {
         `Loaded ${result.stats.meshCount} meshes, ` +
           `${result.stats.triangleCount.toLocaleString()} triangles.`,
       ]);
+      // Post-import options (planner opt-in). Skipped for the demo model.
+      if (opts?.skipDialog) return;
+      setImportOptions({
+        modelName: name,
+        partCount: result.stats.meshCount,
+        assembly: result.assembly,
+        scene: result.scene,
+      });
     },
     [newFromAssembly],
+  );
+
+  /** Run the sequence planner and install the result for review. */
+  const runPlanner = useCallback(
+    async (assembly: Assembly, scene3: THREE.Object3D) => {
+      setWarnings(['Analyzing geometry and drafting a sequence…']);
+      // Yield a frame so the message paints before the sweep loop.
+      await new Promise((r) => setTimeout(r, 30));
+      try {
+        const { planSequence } = await import('@/planner/peel');
+        const { draftOperations } = await import('@/planner/draft');
+        const { collectPartGeoms } = await import('@/planner/feasibility');
+        const { indexScene } = await import('@/cad/loadGltf');
+
+        const index = indexScene(scene3, assembly);
+        const steps = planSequence(assembly, index);
+        const geoms = collectPartGeoms(index);
+        const { operations, unplannedOpIds } = draftOperations(steps, assembly, geoms);
+
+        useStore.getState().beginDraftReview(operations, unplannedOpIds);
+        setWarnings([
+          `Draft ready: ${operations.length - unplannedOpIds.length} steps proposed` +
+            (unplannedOpIds.length ? `, ${unplannedOpIds.length} left unresolved` : '') +
+            '. Review below — nothing is final until you accept.',
+        ]);
+      } catch (err) {
+        setWarnings([`Sequence planner failed: ${(err as Error).message}. Starting from scratch.`]);
+      }
+    },
+    [setWarnings],
   );
 
   const openModel = useCallback(
@@ -98,7 +142,7 @@ export default function App() {
 
   const openDemo = useCallback(() => {
     const { root, name } = makeDemoAssembly();
-    ingest(root, 'demo://gearbox', name, 'built-in demo');
+    ingest(root, 'demo://gearbox', name, 'built-in demo', { skipDialog: true });
   }, [ingest]);
 
   const openProject = useCallback(
@@ -297,6 +341,19 @@ export default function App() {
           <button className="dismiss" onClick={() => setWarnings([])}>✕</button>
         </div>
       )}
+
+      {importOptions && (
+        <ImportOptionsDialog
+          modelName={importOptions.modelName}
+          partCount={importOptions.partCount}
+          onContinue={({ runPlanner: yes }) => {
+            const opts = importOptions;
+            setImportOptions(null);
+            if (yes && opts) void runPlanner(opts.assembly, opts.scene);
+          }}
+        />
+      )}
+      <DraftReviewBanner />
 
       {dragOver && (
         <div className="drop-hint">Drop a .step, .glb, or project .json to open</div>
