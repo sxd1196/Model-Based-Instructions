@@ -8,15 +8,11 @@ export function ViewportToolbar() {
   const pickEnabled = useStore((s) => s.pickEnabled);
   const selection = useStore((s) => s.selection);
   const activeOperationId = useStore((s) => s.activeOperationId);
-  const canUndo = useStore((s) => s.past.length > 0);
-  const canRedo = useStore((s) => s.future.length > 0);
 
   const setAxisLock = useStore((s) => s.setAxisLock);
   const setPickEnabled = useStore((s) => s.setPickEnabled);
   const explodeSelection = useStore((s) => s.explodeSelection);
   const goHomeSelection = useStore((s) => s.goHomeSelection);
-  const undo = useStore((s) => s.undo);
-  const redo = useStore((s) => s.redo);
 
   if (!sequence) return null;
 
@@ -54,8 +50,12 @@ export function ViewportToolbar() {
         >
           ⌂ Home
         </button>
-        <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">↶</button>
-        <button onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">↷</button>
+        {/* Undo/redo are DISABLED pending rework: the user reports undo still
+            misbehaving on motion edits, so the buttons are greyed out rather
+            than offering a broken feature. History is still recorded; the
+            buttons come back when the behaviour is verified trustworthy. */}
+        <button disabled title="Undo — temporarily disabled while we fix history behaviour">↶</button>
+        <button disabled title="Redo — temporarily disabled while we fix history behaviour">↷</button>
       </div>
 
       <div className="vp-group">
