@@ -59,3 +59,14 @@ so it is not blocked architecturally.
 
 **PLM integration.** Enterprise plumbing. Would need a real user with a real
 Teamcenter/Windchill instance to design against.
+
+## Backlogged (user-approved, not scheduled)
+
+- **Rev survival / model update**: reconcile an authored sequence against a
+  revised CAD export. Design discussed 2026-08-23: tiered matcher (name+
+  geometry fingerprint -> geometry-only -> name-only -> position/context for
+  identical instances), reconciliation REPORT with auto-accept only on
+  unambiguous tiers, deltas-from-rest means motions survive moved parts,
+  local-frame anchors survive renames; cluster tracks need frame-change
+  recompute; persist fingerprints + match history for Rev C. Explicitly
+  NOT silent best-effort merging.

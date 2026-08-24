@@ -4,6 +4,7 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { useStore } from '@/state/store';
+import { SectionPlane } from './SectionPlane';
 import { resolveAnnotationPoint, resolveFrame } from '@/domain/evaluate';
 import { CameraBinder, PlaybackClock, SceneBinder } from './SceneBinder';
 import { DragGizmo, PickHandler } from './Manipulation';
@@ -60,6 +61,7 @@ export function Viewport({ scene, assembly, diagonal, center }: Props) {
         />
 
         <AnnotationLayer diagonal={diagonal} />
+        <SectionPlane diagonal={diagonal} center={center} />
         <PickHandler scene={scene} assembly={assembly} />
         <DragGizmo scene={scene} assembly={assembly} />
         <OriginMarker scale={diagonal} />

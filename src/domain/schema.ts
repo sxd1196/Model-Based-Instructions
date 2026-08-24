@@ -170,6 +170,26 @@ export const PartStyle = z.object({
 export type PartStyle = z.infer<typeof PartStyle>;
 
 /**
+ * A section cut that applies for the duration of an operation (v5).
+ *
+ * Like PartStyle, `parts: []` means the WHOLE assembly is cut; a non-empty
+ * list clips only those parts (mesh ids). The cut is a plane normal to one
+ * world axis at `offset` mm along it; `flip` chooses which half is removed.
+ * One section per operation — compound cuts are out of scope until someone
+ * actually needs them.
+ */
+export const SectionCut = z.object({
+  axis: z.enum(['X', 'Y', 'Z']),
+  /** World-space mm along the axis where the plane sits. */
+  offset: z.number(),
+  /** false: keep the -axis side (cut away +axis). true: the reverse. */
+  flip: z.boolean().default(false),
+  /** Empty = section the entire assembly. */
+  parts: z.array(z.string()).default([]),
+});
+export type SectionCut = z.infer<typeof SectionCut>;
+
+/**
  * An Operation is one instruction step — the unit a shop-floor operator sees.
  * This is deliberately the same granularity as a Bill of Process line item,
  * so the model can export to a BOP later without restructuring.
@@ -195,6 +215,8 @@ export const Operation = z.object({
   camera: CameraPose.nullable().default(null),
   annotations: z.array(Annotation).default([]),
   styles: z.array(PartStyle).default([]),
+  /** Optional section cut active during this operation (v5). */
+  section: SectionCut.nullable().default(null),
   /** Free-form, for later BOP/MBOM export: torque specs, tool IDs, part qty. */
   meta: z.record(z.string(), z.string()).default({}),
 });
@@ -240,13 +262,15 @@ export type Assembly = z.infer<typeof Assembly>;
  *       leaders default on.
  *   3 — Annotation anchor union gains 'screen' (2D corner note, camera-
  *       aligned). Purely additive: no existing anchor changes shape.
+ *   5 — Operation gains optional `section` (axis/offset/flip/parts cut,
+ *       null = none). Additive; nothing to rewrite on migrate.
  *   4 — The step INSTRUCTION becomes the on-screen note (descriptionRich +
  *       noteCorner on Operation); the 'screen' anchor kind is REMOVED and
  *       old screen notes fold into their step's instruction. Callout label
  *       offset changes from 2D px to a WORLD-SPACE mm vector (labelOffset),
  *       authored by pulling the note in 3D.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const Sequence = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION).default(SCHEMA_VERSION),
@@ -324,6 +348,11 @@ export function migrate(raw: unknown): unknown {
       op.annotations = kept;
     }
     doc.schemaVersion = 4;
+  }
+
+  // v4 -> v5: section is additive with a null default — bump only.
+  if ((doc.schemaVersion as number) < 5) {
+    doc.schemaVersion = 5;
   }
 
   return doc;

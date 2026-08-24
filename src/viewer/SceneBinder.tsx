@@ -21,6 +21,33 @@ const _quat = new THREE.Quaternion();
 const _pivot = new THREE.Vector3();
 const _offset = new THREE.Vector3();
 
+// ------------------------------------------------------------------ section
+// ONE shared plane, mutated per frame. Every clipped material clone points at
+// this array, so updating the plane updates every cut mesh for free.
+const _sectionPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+const _sectionPlanes = [_sectionPlane];
+const AXIS_VEC: Record<'X' | 'Y' | 'Z', [number, number, number]> = {
+  X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1],
+};
+
+/**
+ * CAD materials are SHARED between meshes, so setting clippingPlanes on an
+ * original would cut every part using it. Instead each material gets a cached
+ * clipped CLONE, swapped in only on meshes the section actually affects.
+ */
+const _clippedClones = new WeakMap<THREE.Material, THREE.Material>();
+function clippedVariant(mat: THREE.Material | THREE.Material[]): THREE.Material | THREE.Material[] {
+  if (Array.isArray(mat)) return mat.map((m) => clippedVariant(m) as THREE.Material);
+  let clone = _clippedClones.get(mat);
+  if (!clone) {
+    clone = mat.clone();
+    clone.clippingPlanes = _sectionPlanes;
+    clone.side = THREE.DoubleSide; // show interior faces at the cut
+    _clippedClones.set(mat, clone);
+  }
+  return clone;
+}
+
 interface Props {
   scene: THREE.Object3D;
   assembly: Assembly;
@@ -30,6 +57,7 @@ interface Props {
 type MatRecord = { original: THREE.Material | THREE.Material[] };
 
 export function SceneBinder({ scene, assembly }: Props) {
+  const gl = useThree((s) => s.gl);
   const index = useMemo(() => indexScene(scene, assembly), [scene, assembly]);
   const rest = useRef(new Map<string, { p: THREE.Vector3; q: THREE.Quaternion }>());
   const materials = useRef(new Map<string, MatRecord>());
@@ -98,8 +126,11 @@ export function SceneBinder({ scene, assembly }: Props) {
       selectionMat.current,
       selection,
     );
+    applySection(frame, index, materials.current, gl);
 
     if (import.meta.env.DEV && typeof window !== 'undefined') {
+      // Dev-only: the three scene root, for headless verification scripts.
+      (window as unknown as { __r3fScene?: THREE.Object3D }).__r3fScene = scene.parent ?? scene;
       // Dev-only probe: world bbox centres of the selected meshes, so
       // headless checks can verify the selection tint tracks the part.
       (window as unknown as { __selectionProbe?: number[][] }).__selectionProbe =
@@ -250,4 +281,60 @@ export function PlaybackClock() {
   });
 
   return null;
+}
+
+/**
+ * Apply the active section cut for this frame.
+ *
+ * Cheap when there is no section (one pass restoring any leftover clones);
+ * when one is active: mutate the SHARED plane, then swap affected meshes to
+ * their clipped material clone. dragPreview-style live edits work because the
+ * plane is re-read from the frame every render.
+ */
+const _cutNow = new Set<string>();
+function applySection(
+  frame: ResolvedFrame,
+  index: Map<string, THREE.Object3D>,
+  materials: Map<string, MatRecord>,
+  gl: THREE.WebGLRenderer,
+) {
+  const section = frame.section;
+  gl.localClippingEnabled = !!section;
+
+  _cutNow.clear();
+  if (section) {
+    const [nx, ny, nz] = AXIS_VEC[section.axis];
+    // flip=false: keep -axis side, so the plane normal points -axis.
+    const sign = section.flip ? 1 : -1;
+    _sectionPlane.normal.set(nx * sign, ny * sign, nz * sign);
+    _sectionPlane.constant = -section.offset * sign;
+
+    if (section.parts.length === 0) {
+      for (const id of index.keys()) _cutNow.add(id);
+    } else {
+      for (const id of section.parts) _cutNow.add(id);
+    }
+  }
+
+  // Runs AFTER the style pass. The style pass sets each mesh to its ORIGINAL
+  // material (normal parts), a style material (ghost/highlight/selection), or
+  // hides it. We upgrade only original-material meshes to their clipped
+  // clone — cutting a ghosted/selected part changes its material anyway, so
+  // style wins over section on conflict (same precedence as Appearance).
+  for (const [id, obj] of index) {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) continue;
+    const rec = materials.get(id);
+    if (!rec) continue;
+
+    if (_cutNow.has(id)) {
+      if (mesh.material === rec.original) {
+        mesh.material = clippedVariant(rec.original);
+      }
+    } else {
+      // Not cut this frame: if we left a clipped clone on it, restore.
+      const clipped = clippedVariant(rec.original);
+      if (mesh.material === clipped) mesh.material = rec.original;
+    }
+  }
 }

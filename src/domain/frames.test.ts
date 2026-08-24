@@ -194,7 +194,7 @@ describe('REGRESSION: rotating a sub-assembly preserves its shape', () => {
       id: 'op1', title: 'Rotate cover', description: '', noteCorner: 'tl' as const,
       duration: 1, dwell: 0,
       tracks: [] as Sequence['operations'][number]['tracks'],
-      camera: null, annotations: [], styles: [], meta: {},
+      camera: null, annotations: [], styles: [], meta: {}, section: null,
     };
 
     // One track per parent cluster — what commitGroupDrag now writes.
@@ -244,7 +244,7 @@ describe('REGRESSION: rotating a sub-assembly preserves its shape', () => {
     }));
     sequence.operations.push({
       id: 'op1', title: '', description: '', noteCorner: 'tl' as const, duration: 1, dwell: 0,
-      tracks, camera: null, annotations: [], styles: [], meta: {},
+      tracks, camera: null, annotations: [], styles: [], meta: {}, section: null,
     });
 
     const parentRigid = (id: string) => {

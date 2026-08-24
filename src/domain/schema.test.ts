@@ -367,10 +367,10 @@ describe('v3 -> v4 migration', () => {
     expect(seq.operations[0].description).toBe('Existing instruction.');
   });
 
-  it('v1 documents still climb all the way to v4', () => {
+  it('v1 documents still climb all the way to the current version', () => {
     const doc = v3doc() as Record<string, unknown>;
     delete doc.schemaVersion;
     const seq = parseSequence(doc);
-    expect(seq.schemaVersion).toBe(4);
+    expect(seq.schemaVersion).toBe(SCHEMA_VERSION);
   });
 });

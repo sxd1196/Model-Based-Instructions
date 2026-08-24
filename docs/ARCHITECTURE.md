@@ -303,7 +303,22 @@ survives because React never unmounts the subtree. The main window becomes
 tree | expanded timeline/lanes | inspector at full width. Stylesheets are
 cloned into the child head; closing either window re-docks cleanly.
 
-## Known limitations
+## Section cuts (2026-08-23, schema v5)
+
+Each operation may carry ONE section cut: axis (X/Y/Z), world-mm offset,
+flip, and a parts list where [] = whole assembly (same convention as
+Appearance). The evaluator surfaces the ACTIVE operation's section on the
+resolved frame; SceneBinder implements it with three.js clipping planes.
+Key mechanics: ONE shared THREE.Plane mutated per frame, and because CAD
+materials are shared between meshes, each material gets a cached clipped
+CLONE (WeakMap) swapped onto exactly the meshes being cut — clipping the
+original would cut every part using that material. Style pass wins over
+section on conflict (a ghosted part ghosts, not cuts). The viewport shows
+a draggable orange quad (SectionPlane.tsx): drag along its normal with
+closest-approach line math, live setSection(live=true) writes, ONE undo
+entry per drag via beginGesture — the same gesture pattern as lane bars.
+Limitation: the cut is per-plane-per-op (no compound cuts), and cut faces
+are open (no cap polygons) — DoubleSide makes interiors visible instead.
 
 - ~~**Selection highlight uses `BoxHelper`**, not a true outline pass. Cheap and~~
   Replaced 2026-08-23: selection now TINTS the part amber (material swap in

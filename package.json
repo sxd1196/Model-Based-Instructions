@@ -17,7 +17,8 @@
     "smoke": "node scripts/smoke.mjs",
     "verify:drag": "node scripts/verify-drag.mjs",
     "verify:lanes": "node scripts/verify-lanes.mjs",
-    "verify:popout": "node scripts/verify-popout.mjs"
+    "verify:popout": "node scripts/verify-popout.mjs",
+    "verify:section": "node scripts/verify-section.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",

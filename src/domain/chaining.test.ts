@@ -42,7 +42,7 @@ const track = (partIds: string[], partial: Partial<Track>): Track => ({
 const op = (tracks: Track[], partial: Partial<Operation> = {}): Operation => ({
   id: Math.random().toString(36).slice(2),
   title: 'op', description: '', noteCorner: 'tl' as const, duration: 1, dwell: 0,
-  tracks, camera: null, annotations: [], styles: [], meta: {},
+  tracks, camera: null, annotations: [], styles: [], meta: {}, section: null,
   ...partial,
 });
 

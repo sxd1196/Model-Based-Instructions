@@ -16,6 +16,7 @@ export function Inspector() {
   const updateOperation = useStore((s) => s.updateOperation);
   const setOperationCamera = useStore((s) => s.setOperationCamera);
   const setStyle = useStore((s) => s.setStyle);
+  const setSection = useStore((s) => s.setSection);
   const addAnnotation = useStore((s) => s.addAnnotation);
   const updateAnnotation = useStore((s) => s.updateAnnotation);
   const removeAnnotation = useStore((s) => s.removeAnnotation);
@@ -118,6 +119,75 @@ export function Inspector() {
               <div key={i}>{s.mode}: {s.parts.length} part(s)</div>
             ))}
           </div>
+        )}
+      </div>
+
+      <div className="section">
+        <div className="section-head">
+          <span>Section</span>
+          {op.section && (
+            <button onClick={() => setSection(op.id, null)}>clear</button>
+          )}
+        </div>
+        {!op.section ? (
+          <>
+            <div className="btn-row">
+              {(['X', 'Y', 'Z'] as const).map((axis) => (
+                <button
+                  key={axis}
+                  title={`Cut with a plane normal to ${axis}, on ${
+                    selection.length ? 'the selected parts' : 'the whole assembly'
+                  }`}
+                  onClick={() =>
+                    setSection(op.id, {
+                      axis,
+                      offset: 0,
+                      flip: false,
+                      // Same convention as Appearance: with a selection, cut
+                      // only those parts; empty selection = whole assembly.
+                      parts: selection,
+                    })
+                  }
+                >
+                  cut {axis}
+                </button>
+              ))}
+            </div>
+            <div className="hint">
+              {selection.length
+                ? `Will section ${selection.length} selected part(s).`
+                : 'Will section the whole assembly. Select parts first to cut only them.'}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="btn-row">
+              <label className="lane-num" title="Plane position along the axis (mm)">
+                <span>{op.section.axis} =</span>
+                <input
+                  type="number"
+                  step={1}
+                  value={Math.round(op.section.offset * 10) / 10}
+                  onChange={(e) =>
+                    setSection(op.id, { ...op.section!, offset: Number(e.target.value) })
+                  }
+                />
+                <span>mm</span>
+              </label>
+              <button
+                title="Keep the other side instead"
+                onClick={() => setSection(op.id, { ...op.section!, flip: !op.section!.flip })}
+              >
+                ⇄ flip
+              </button>
+            </div>
+            <div className="hint">
+              {op.section.parts.length
+                ? `Cutting ${op.section.parts.length} part(s)`
+                : 'Cutting the whole assembly'}
+              {' · drag the orange plane in the viewport'}
+            </div>
+          </>
         )}
       </div>
 

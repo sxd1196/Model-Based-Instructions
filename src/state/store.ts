@@ -17,6 +17,7 @@ import type {
   Operation,
   PartStyle,
   Quat,
+  SectionCut,
   Sequence,
   Track,
   Vec3,
@@ -173,6 +174,8 @@ interface Actions {
     normal: Vec3,
   ) => void;
   setStyle: (operationId: string, style: PartStyle) => void;
+  /** Set or clear (null) the operation section cut; live=true skips checkpoint. */
+  setSection: (operationId: string, section: SectionCut | null, live?: boolean) => void;
 
   /** Return all components to their original (rest) positions. */
   goHome: () => void;
@@ -849,6 +852,19 @@ export const useStore = create<State & Actions>()(
             (x) => !x.parts.some((p) => style.parts.includes(p)),
           );
           op.styles.push(style);
+        });
+      },
+
+      /**
+       * Set (or clear, with null) the operation's section cut. live=true
+       * skips the checkpoint — plane drags open a gesture first, same
+       * pattern as lane timing bars.
+       */
+      setSection: (operationId, section, live = false) => {
+        if (!live) checkpoint(section ? 'Set section' : 'Clear section');
+        set((s) => {
+          const op = findOp(s, operationId);
+          if (op) op.section = section;
         });
       },
 

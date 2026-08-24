@@ -30,7 +30,7 @@ function sequenceWithStep(): Sequence {
   const part = idOf('Cover_Plate');
   const op: Operation = {
     id: 'op1', noteCorner: 'tl' as const, title: 'Lift cover', description: 'Straight up.',
-    duration: 1.5, dwell: 0.4,
+    duration: 1.5, dwell: 0.4, section: null,
     tracks: [{
       id: 't1', parts: [part],
       from: { translate: [0, 0, 0], rotate: IDENTITY_QUAT, pivot: [0, 0, 0] },

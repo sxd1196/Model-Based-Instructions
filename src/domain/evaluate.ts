@@ -12,6 +12,7 @@
  */
 import type {
   Annotation,
+  SectionCut,
   CameraPose,
   Move,
   Operation,
@@ -154,6 +155,8 @@ export interface ResolvedFrame {
   camera: CameraPose | null;
   /** Annotations visible right now, from the active operation. */
   annotations: Annotation[];
+  /** Section cut active right now (the active operation owns it), or null. */
+  section: SectionCut | null;
   activeOperationId: string | null;
   activeOperationIndex: number;
 }
@@ -165,6 +168,7 @@ const EMPTY_FRAME: ResolvedFrame = {
   annotations: [],
   activeOperationId: null,
   activeOperationIndex: -1,
+  section: null,
 };
 
 /**
@@ -199,6 +203,7 @@ export function resolveFrame(sequence: Sequence, time: number): ResolvedFrame {
     styles,
     camera: resolveCamera(sequence, timeline, entry.index, localT),
     annotations: entry.operation.annotations,
+    section: entry.operation.section ?? null,
     activeOperationId: entry.operation.id,
     activeOperationIndex: entry.index,
   };

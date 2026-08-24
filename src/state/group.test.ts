@@ -9,6 +9,7 @@ import { resolveFrame, resolveAnnotationPoint } from '@/domain/evaluate';
 import { composePartTransform, quatFromAxisAngle } from '@/domain/transform';
 import { parentWorldTransform } from '@/domain/authoring';
 import { applyRigid } from '@/domain/rigid';
+import { parseSequence } from '@/domain/schema';
 import { IDENTITY_QUAT, type Vec3 } from '@/domain/schema';
 
 const { root, name } = makeDemoAssembly();
@@ -484,5 +485,65 @@ describe('default step timing', () => {
     const op = s().sequence!.operations[0];
     expect(op.duration).toBe(5);
     expect(op.dwell).toBe(1);
+  });
+});
+
+describe('section cuts (v5)', () => {
+  it('sets, edits, and clears a whole-assembly section', () => {
+    const opId = s().addOperation()!;
+    s().setSection(opId, { axis: 'Z', offset: 30, flip: false, parts: [] });
+    expect(s().sequence!.operations[0].section).toEqual({ axis: 'Z', offset: 30, flip: false, parts: [] });
+
+    s().setSection(opId, { axis: 'Z', offset: -12.5, flip: true, parts: [] });
+    expect(s().sequence!.operations[0].section!.offset).toBe(-12.5);
+    expect(s().sequence!.operations[0].section!.flip).toBe(true);
+
+    s().setSection(opId, null);
+    expect(s().sequence!.operations[0].section).toBeNull();
+  });
+
+  it('selection-scoped section carries the part list', () => {
+    const opId = s().addOperation()!;
+    const parts = [idOf('Cover_Plate'), idOf('Cover_Gasket')];
+    s().setSection(opId, { axis: 'X', offset: 0, flip: false, parts });
+    expect(s().sequence!.operations[0].section!.parts).toEqual(parts);
+  });
+
+  it('live plane drags are one undo step (gesture pattern)', () => {
+    const opId = s().addOperation()!;
+    s().setSection(opId, { axis: 'Y', offset: 0, flip: false, parts: [] });
+    const pastBefore = useStore.getState().past.length;
+
+    s().beginGesture('Move section plane');
+    for (let i = 1; i <= 20; i++) {
+      s().setSection(opId, { axis: 'Y', offset: i * 2, flip: false, parts: [] }, true);
+    }
+    expect(useStore.getState().past.length).toBe(pastBefore + 1);
+
+    s().undo();
+    expect(s().sequence!.operations[0].section!.offset).toBe(0);
+  });
+
+  it('the evaluator surfaces the active section and only the active one', () => {
+    const op1 = s().addOperation()!;
+    const op2 = s().addOperation()!;
+    s().setSection(op1, { axis: 'Z', offset: 10, flip: false, parts: [] });
+
+    const seq = s().sequence!;
+    const d1 = seq.operations[0].duration;
+    const inOp1 = resolveFrame(seq, d1 * 0.5);
+    expect(inOp1.section?.offset).toBe(10);
+
+    const inOp2 = resolveFrame(seq, d1 + seq.operations[0].dwell + 0.1);
+    expect(inOp2.section).toBeNull();
+    void op2;
+  });
+
+  it('round-trips through save/load (schema v5)', () => {
+    const opId = s().addOperation()!;
+    s().setSection(opId, { axis: 'X', offset: 42, flip: true, parts: [idOf('Cover_Plate')] });
+    const json = JSON.parse(JSON.stringify(s().sequence));
+    const parsed = parseSequence(json);
+    expect(parsed.operations[0].section).toEqual(s().sequence!.operations[0].section);
   });
 });
