@@ -74,8 +74,78 @@ export function collectPartGeoms(index: Map<string, THREE.Object3D>): Map<string
     const tris = (mesh.geometry.index?.count ?? mesh.geometry.attributes.position.count) / 3;
     const q = (n: number) => Math.round(n * 10) / 10;
     const signature = `${q(size.x)}x${q(size.y)}x${q(size.z)}:${tris}`;
-    out.set(id, { id, mesh, aabb, volume, signature });
+
+    /**
+     * PLANNING PROXY: collision math runs on a decimated copy, not the
+     * render mesh. Dense STEP tessellation (the faucet is ~100k tris/part)
+     * made narrow-phase sweeps cost MINUTES; vertex-cluster decimation to a
+     * ~1.2mm grid keeps planning-relevant shape (holes, bosses, walls) and
+     * cuts tests to milliseconds. The render mesh is untouched — only the
+     * planner sees the proxy. Grid size trades fidelity for speed; features
+     * thinner than ~1.2mm can be missed, acceptable for a reviewed DRAFT.
+     */
+    const planMesh = (() => {
+      if (tris <= 8000) return mesh;
+      // Cell is WORLD mm; convert to local units via the mesh's world scale.
+      const ws = new THREE.Vector3();
+      mesh.matrixWorld.decompose(new THREE.Vector3(), new THREE.Quaternion(), ws);
+      const localCell = 1.2 / (Math.abs(ws.x) || 1);
+      const m = new THREE.Mesh(
+        decimateByClustering(mesh.geometry as THREE.BufferGeometry, localCell),
+        mesh.material,
+      );
+      return m;
+    })();
+    if (planMesh !== mesh) {
+      planMesh.matrixWorld.copy(mesh.matrixWorld);
+      planMesh.matrixAutoUpdate = false;
+      planMesh.updateWorldMatrix = (() => void 0) as typeof mesh.updateWorldMatrix;
+    }
+
+    out.set(id, { id, mesh: planMesh, aabb, volume, signature });
   }
+  return out;
+}
+
+/**
+ * Vertex-clustering decimation: snap vertices to a world-`cell`-sized grid,
+ * merge, drop degenerate triangles. O(n), no dependency, quality is plenty
+ * for sweep collision (this is a proxy, not a render mesh).
+ */
+function decimateByClustering(geom: THREE.BufferGeometry, cell: number): THREE.BufferGeometry {
+  const pos = geom.attributes.position;
+  const idx = geom.index;
+  const triCount = idx ? idx.count / 3 : pos.count / 3;
+
+  const keyOf = (x: number, y: number, z: number) =>
+    `${Math.round(x / cell)},${Math.round(y / cell)},${Math.round(z / cell)}`;
+
+  const clusterIndex = new Map<string, number>();
+  const clustered: number[] = [];
+  const remap = new Uint32Array(pos.count);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const key = keyOf(x, y, z);
+    let ci = clusterIndex.get(key);
+    if (ci === undefined) {
+      ci = clustered.length / 3;
+      clusterIndex.set(key, ci);
+      clustered.push(x, y, z);
+    }
+    remap[i] = ci;
+  }
+
+  const newIdx: number[] = [];
+  for (let t = 0; t < triCount; t++) {
+    const a = remap[idx ? idx.getX(t * 3) : t * 3];
+    const b = remap[idx ? idx.getX(t * 3 + 1) : t * 3 + 1];
+    const c = remap[idx ? idx.getX(t * 3 + 2) : t * 3 + 2];
+    if (a !== b && b !== c && a !== c) newIdx.push(a, b, c);
+  }
+
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(clustered, 3));
+  out.setIndex(newIdx);
   return out;
 }
 
@@ -114,6 +184,12 @@ function intersectsAt(moving: PartGeom, offset: THREE.Vector3, fixed: PartGeom):
 const CONTACT_EPS = 0.25;
 /** Sweep sampling density: samples per part-bbox-length of travel. */
 const SAMPLES_PER_LENGTH = 4;
+/**
+ * Hard cap on distance between sweep samples (mm). Without it, sample count
+ * scales off the MOVER's size, and a long part hops over thin walls between
+ * samples (tunneling) — the v1 "parts pass through each other" bug, cause #3.
+ */
+const MAX_SAMPLE_STEP = 2.5;
 
 export interface SweepResult {
   ok: boolean;
@@ -124,30 +200,214 @@ export interface SweepResult {
 const _zero = new THREE.Vector3();
 
 /**
- * Pairs that already intersect at REST are excluded from sweep blocking.
+ * Penetration DEPTH between two parts (mm): max distance-inside-the-fixed-mesh
+ * over sample points of the moving geometry.
  *
- * Real CAD interpenetrates on purpose: threads aren't modeled (bolt shank
- * vs hole), gaskets are drawn compressed, press-fits overlap. Treating rest
- * contact as a collision would make everything unremovable. This is the
- * standard blocking-graph construction (Wilson): only NEW contact blocks.
- * Cost: a false "free" is possible through an ignored pair — acceptable for
- * a DRAFT the human reviews, and cheaper than exact thread modelling.
+ * CRITICAL: points are sampled ALONG EDGES, not just at vertices. CAD
+ * tessellation puts vertices only where curvature demands them — a cylinder
+ * has vertices at its end rings ONLY, so a shank passing through a thin part
+ * mid-length has NO vertex inside it and vertex sampling reads depth 0 at
+ * rest but >0 mid-sweep, wrongly blocking legal extractions (found on the
+ * gearbox gasket). Edge walking at ≤2.5mm spacing closes those gaps.
  */
-function restIntersecting(a: PartGeom, b: PartGeom): boolean {
-  return intersectsAt(a, _zero, b);
+function penetrationDepth(moving: PartGeom, offset: THREE.Vector3, fixed: PartGeom, stopAbove = Infinity, probeBudget = 2500): number {
+  _shifted.copy(moving.aabb).translate(offset);
+  if (!_shifted.intersectsBox(fixed.aabb)) return 0;
+
+  moving.mesh.updateWorldMatrix(true, false);
+  fixed.mesh.updateWorldMatrix(true, false);
+  _matA.copy(moving.mesh.matrixWorld);
+  _matA.premultiply(new THREE.Matrix4().makeTranslation(offset.x, offset.y, offset.z));
+  _inv.copy(fixed.mesh.matrixWorld).invert();
+  _matRel.multiplyMatrices(_inv, _matA);
+
+  const bvh = bvhOf(fixed.mesh.geometry as THREE.BufferGeometry);
+  const geom = moving.mesh.geometry as THREE.BufferGeometry;
+  const pos = geom.attributes.position;
+  const idx = geom.index;
+  const target = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
+  const scale = new THREE.Vector3();
+  fixed.mesh.matrixWorld.decompose(new THREE.Vector3(), new THREE.Quaternion(), scale);
+  const su = Math.abs(scale.x) || 1;
+
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const p = new THREE.Vector3();
+  const inside = (pt: THREE.Vector3): number => {
+    const hits = bvh.raycast(new THREE.Ray(pt, _px), THREE.DoubleSide);
+    if (hits.length % 2 === 0) return 0;
+    bvh.closestPointToPoint(pt, target);
+    return target.distance * su;
+  };
+
+  let worst = 0;
+  const triCount = idx ? idx.count / 3 : pos.count / 3;
+  const triStride = Math.max(1, Math.floor(triCount / 400)); // ≤400 tris probed
+  const stepLocal = MAX_SAMPLE_STEP / su; // ≤2.5mm world spacing on edges
+
+  // Probe budget, spread across the WHOLE mesh (front-biased truncation
+  // skews results): estimate probes per edge from stepLocal, then widen the
+  // tri stride so expected total stays ~2500. Dense STEP tessellation
+  // (faucet ~100k tris) cost minutes unbounded; this keeps calls ~ms.
+  const est = Math.max(1, Math.min(12, Math.round(4 / stepLocal)));
+  const budgetStride = Math.max(triStride, Math.ceil((triCount * 3 * (est + 1)) / probeBudget));
+  for (let t = 0; t < triCount; t += budgetStride) {
+    for (let e = 0; e < 3; e++) {
+      const i0 = idx ? idx.getX(t * 3 + e) : t * 3 + e;
+      const i1 = idx ? idx.getX(t * 3 + ((e + 1) % 3)) : t * 3 + ((e + 1) % 3);
+      a.fromBufferAttribute(pos, i0).applyMatrix4(_matRel);
+      b.fromBufferAttribute(pos, i1).applyMatrix4(_matRel);
+      const len = a.distanceTo(b);
+      const n = Math.min(Math.max(1, Math.ceil(len / stepLocal)), 24);
+      for (let s = 0; s <= n; s++) {
+        p.lerpVectors(a, b, s / n);
+        const d = inside(p);
+        if (d > worst) worst = d;
+        // Early exit: caller only needs 'over budget or not' — deep plows
+        // (the common block) resolve in a handful of probes instead of a
+        // full-mesh scan. THE fix that took the faucet from 261s to seconds.
+        if (worst > stopAbove) return worst;
+      }
+    }
+  }
+  return worst;
+}
+const _px = new THREE.Vector3(1, 0, 0);
+
+/**
+ * Rest-contact record for a touching/overlapping pair: its baseline
+ * penetration budget, and the contact normal (unit vector pointing AWAY
+ * from the fixed part at the closest approach — the "push-out" direction).
+ */
+interface RestContact {
+  depth: number;
+  normal: THREE.Vector3;
 }
 
-const _restPairs = new WeakMap<PartGeom, Set<string>>();
-function ignoredPartners(g: PartGeom, all: Map<string, PartGeom>): Set<string> {
-  let set = _restPairs.get(g);
-  if (!set) {
-    set = new Set();
-    for (const [oid, other] of all) {
-      if (oid !== g.id && restIntersecting(g, other)) set.add(oid);
-    }
-    _restPairs.set(g, set);
+const _restContacts = new Map<string, RestContact | null>();
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/**
+ * Baseline the rest relationship of a pair: null when far apart; otherwise
+ * the penetration budget (0 for clean touch) and the contact normal.
+ *
+ * v1's fatal flaw was making rest-intersecting pairs invisible FOREVER, in
+ * every direction — parts could plow straight through their neighbours.
+ * v2 keeps a BUDGET: during a sweep the pair only blocks when penetration
+ * EXCEEDS its rest depth (+tolerance). Sliding out of a hole stays legal;
+ * sliding deeper INTO the neighbour is a collision from the first sample.
+ */
+function restContactOf(a: PartGeom, b: PartGeom): RestContact | null {
+  const key = pairKey(a.id, b.id);
+  const hit = _restContacts.get(key);
+  if (hit !== undefined) return hit;
+
+  // Proximity gate: AABBs inflated by 2mm must overlap to bother.
+  _shifted.copy(a.aabb).expandByScalar(2);
+  if (!_shifted.intersectsBox(b.aabb)) {
+    _restContacts.set(key, null);
+    return null;
   }
-  return set;
+
+  const depth = penetrationDepth(a, _zero, b);
+  const touching = depth > 0 || intersectsAt(a, _zero, b);
+
+  // Contact normal via closest points between the two meshes, computed from
+  // a's sampled vertices against b's BVH: normal points from b's surface
+  // toward a — the direction a must move to separate.
+  a.mesh.updateWorldMatrix(true, false);
+  b.mesh.updateWorldMatrix(true, false);
+  _matA.copy(a.mesh.matrixWorld);
+  _inv.copy(b.mesh.matrixWorld).invert();
+  _matRel.multiplyMatrices(_inv, _matA);
+  const bvh = bvhOf(b.mesh.geometry as THREE.BufferGeometry);
+  const pos = (a.mesh.geometry as THREE.BufferGeometry).attributes.position;
+  const v = new THREE.Vector3();
+  const target = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
+  let best = Infinity;
+  const bestPoint = new THREE.Vector3();
+  const bestSurface = new THREE.Vector3();
+  const stride = Math.max(1, Math.floor(pos.count / 200));
+  for (let i = 0; i < pos.count; i += stride) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(_matRel);
+    bvh.closestPointToPoint(v, target);
+    if (target.distance < best) {
+      best = target.distance;
+      bestPoint.copy(v);
+      bestSurface.copy(target.point);
+    }
+  }
+
+  // Only meaningful when the pair is actually close (< 1.5mm) or touching.
+  if (!touching && best * 1 /* local≈world for uniform scale */ > 1.5) {
+    _restContacts.set(key, null);
+    return null;
+  }
+
+  // b-local -> world direction from surface point to a's vertex.
+  const normal = bestPoint.sub(bestSurface);
+  normal.applyMatrix4(new THREE.Matrix4().extractRotation(b.mesh.matrixWorld));
+  if (normal.lengthSq() < 1e-12) normal.set(0, 0, 1);
+  normal.normalize();
+
+  const rec: RestContact = { depth, normal };
+  _restContacts.set(key, rec);
+  return rec;
+}
+
+export const __dbgPenetration = penetrationDepth;
+
+/** Clear cached rest contacts (fresh model). */
+export function resetContactCache(): void {
+  _restContacts.clear();
+}
+
+/**
+ * The aggregate "push-out" vector for a unit: sum of contact normals against
+ * all still-assembled neighbours. This is the discrete version of the net
+ * contact force Assemble-Them-All reads out of its simulator — geometry
+ * already knows the escape direction before anything moves. Used to RANK
+ * the six probe directions (best-aligned first).
+ */
+export function pushOutVector(
+  movingIds: string[],
+  remaining: Map<string, PartGeom>,
+  geoms: Map<string, PartGeom>,
+): THREE.Vector3 {
+  const movingSet = new Set(movingIds);
+  const out = new THREE.Vector3();
+  for (const id of movingIds) {
+    const g = geoms.get(id);
+    if (!g) continue;
+    for (const [oid, other] of remaining) {
+      if (movingSet.has(oid)) continue;
+      const rc = restContactOf(g, other);
+      // Penetrating pairs (unmodelled threads etc.) have ill-defined normals
+      // — closest-point from an INSIDE vertex points anywhere. Only clean
+      // surface contacts (depth ≈ 0) vote on the escape direction.
+      if (rc && rc.depth < 0.5) out.add(rc.normal);
+    }
+  }
+  return out;
+}
+
+/** Probe order for a unit: aligned-with-push-out first, gravity as tiebreak. */
+export function rankedDirections(
+  movingIds: string[],
+  remaining: Map<string, PartGeom>,
+  geoms: Map<string, PartGeom>,
+): Dir[] {
+  const push = pushOutVector(movingIds, remaining, geoms);
+  if (push.lengthSq() < 1e-9) return [...DIR_ORDER];
+  push.normalize();
+  const score = (d: Dir) => push.dot(DIR_VEC[d]);
+  return [...DIR_ORDER].sort((a, b) => {
+    const diff = score(b) - score(a);
+    if (Math.abs(diff) > 1e-6) return diff;
+    return DIR_ORDER.indexOf(a) - DIR_ORDER.indexOf(b); // stable gravity tiebreak
+  });
 }
 
 /**
@@ -186,17 +446,78 @@ export function canSweepOut(
   if (travel <= 0) return { ok: true }; // already clear
 
   const unitLen = Math.max(unitBox.max[axis] - unitBox.min[axis], 1);
-  const samples = Math.max(3, Math.ceil((travel / unitLen) * SAMPLES_PER_LENGTH));
+  const samples = Math.max(
+    3,
+    Math.ceil((travel / unitLen) * SAMPLES_PER_LENGTH),
+    Math.ceil(travel / MAX_SAMPLE_STEP), // tunneling guard: never hop >2.5mm
+  );
 
+  /**
+   * Budget tolerance: rest depth + 30% + 0.6mm. The slack absorbs edge-
+   * sample jitter (probes land on different points at each offset, ±0.5mm
+   * on the gearbox gasket); real plowing deepens by many mm and still trips.
+   * Original tighter budget (15%+0.1) false-blocked the bolt extraction. Sliding OUT of a hole keeps
+   * penetration ≤ rest depth (legal); any move that deepens contact exceeds
+   * the budget immediately (blocked). Pairs with no rest contact have budget
+   * 0 — plain honest collision detection.
+   *
+   * PERFORMANCE: pair-first, not sample-first. For each (mover, fixed) pair
+   * the axis interval of d where their AABBs can overlap is computed in
+   * closed form; pairs whose boxes never meet along the travel cost ZERO
+   * narrow-phase tests, and the rest are sampled only inside their interval
+   * (≤2.5mm steps, capped). Sample-first scanning made dense STEP meshes
+   * take minutes; this makes them take seconds.
+   */
   const offset = new THREE.Vector3();
-  for (let s = 1; s <= samples; s++) {
-    const d = (travel * s) / samples;
-    offset.copy(v).multiplyScalar(d);
-    for (const m of moving) {
-      const ignored = ignoredPartners(m, geoms);
-      for (const f of fixed) {
-        if (ignored.has(f.id)) continue; // rest contact: threads/gasket/press-fit
-        if (intersectsAt(m, offset, f)) return { ok: false, blockedBy: f.id };
+  const o1 = axis === 'x' ? 'y' : 'x';
+  const o2 = axis === 'z' ? 'y' : 'z';
+  for (const m of moving) {
+    for (const f of fixed) {
+      // Off-axis AABB overlap never changes during an axis sweep.
+      if (
+        m.aabb.max[o1] < f.aabb.min[o1] - CONTACT_EPS ||
+        m.aabb.min[o1] > f.aabb.max[o1] + CONTACT_EPS ||
+        m.aabb.max[o2] < f.aabb.min[o2] - CONTACT_EPS ||
+        m.aabb.min[o2] > f.aabb.max[o2] + CONTACT_EPS
+      ) {
+        continue;
+      }
+      // 1-D interval of travel d where the boxes overlap on the sweep axis.
+      const dirSign = v[axis];
+      let dMin: number;
+      let dMax: number;
+      if (dirSign > 0) {
+        dMin = f.aabb.min[axis] - m.aabb.max[axis];
+        dMax = f.aabb.max[axis] - m.aabb.min[axis];
+      } else {
+        dMin = m.aabb.min[axis] - f.aabb.max[axis];
+        dMax = m.aabb.max[axis] - f.aabb.min[axis];
+      }
+      const start = Math.max(dMin + CONTACT_EPS, travel / samples);
+      const end = Math.min(dMax - CONTACT_EPS, travel);
+      if (end <= start) continue;
+
+      const span = end - start;
+      // Rest contact decided upfront (cached): it sets both the penetration
+      // budget AND the sampling density. Non-touching pairs use fine steps
+      // with the cheap boolean test only; touching pairs use sparse steps
+      // (plow violations are deep and persistent — 12 samples across the
+      // overlap catch them) and a light probe budget. This is what took the
+      // faucet plan from 260s to seconds: fine-stepped FULL penetration
+      // scans on every legal sliding sample were the entire cost.
+      const rc = restContactOf(m, f);
+      const budget = rc ? rc.depth * 1.3 + 0.6 : 0;
+      const n = budget > 0
+        ? Math.min(Math.max(3, Math.ceil(span / MAX_SAMPLE_STEP)), 8)
+        : Math.min(Math.max(3, Math.ceil(span / MAX_SAMPLE_STEP)), 60);
+      for (let s = 0; s <= n; s++) {
+        const d = start + (span * s) / n;
+        offset.copy(v).multiplyScalar(d);
+        if (!intersectsAt(m, offset, f)) continue;
+        if (budget <= 0) return { ok: false, blockedBy: f.id };
+        if (penetrationDepth(m, offset, f, budget, 300) > budget) {
+          return { ok: false, blockedBy: f.id };
+        }
       }
     }
   }
@@ -204,8 +525,11 @@ export function canSweepOut(
 }
 
 /**
- * All feasible removal directions for a unit, in preference order.
- * Returns [] when the unit is currently blocked in all six directions.
+ * All feasible removal directions for a unit, best-first.
+ *
+ * v2: probe order is RANKED by the unit's aggregate contact normal (the
+ * push-out vector) — "move opposite the plane you're touching on" — instead
+ * of a fixed gravity-first order. Gravity breaks ties.
  */
 export function feasibleDirections(
   movingIds: string[],
@@ -213,7 +537,7 @@ export function feasibleDirections(
   geoms: Map<string, PartGeom>,
 ): { dir: Dir; blockedBy?: string }[] {
   const out: { dir: Dir }[] = [];
-  for (const dir of DIR_ORDER) {
+  for (const dir of rankedDirections(movingIds, remaining, geoms)) {
     if (canSweepOut(movingIds, dir, remaining, geoms).ok) out.push({ dir });
   }
   return out;

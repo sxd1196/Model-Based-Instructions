@@ -49,7 +49,8 @@ try {
   record('app loads', true, await page.title());
 
   // ---------------------------------------------------------------- demo
-  await page.getByRole('button', { name: /load demo model/i }).click();
+  await page.getByRole('button', { name: /load a demo model/i }).click();
+await page.getByRole('button', { name: /gearbox/i }).click();
   await page.waitForTimeout(2500);
 
   const treeRows = await page.locator('.tree-row').count();
@@ -283,7 +284,8 @@ try {
   // Reload the demo (the STEP import replaced it), author a step, then export
   // and verify the doc really contains a rendered image — offscreen WebGL is
   // exactly the kind of thing that silently yields a blank canvas.
-  await page.getByRole('button', { name: /demo model/i }).click();
+  await page.getByRole('button', { name: /demo models/i }).click();
+await page.getByRole('button', { name: /gearbox/i }).click();
   await page.waitForTimeout(2500);
   await page.mouse.click(cx, cy);
   await page.waitForTimeout(400);

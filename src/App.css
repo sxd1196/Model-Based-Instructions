@@ -239,6 +239,25 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .vp-label { font-size: 9px; letter-spacing: .3px; text-transform: uppercase; opacity: .75; }
 .vp-mode.on .vp-label { opacity: 1; }
 
+/* ---------- demo model picker ---------- */
+.demo-wrap { position: relative; }
+.demo-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 80;
+  min-width: 230px; background: var(--panel, #12151d);
+  border: 1px solid var(--line, #262b36); border-radius: 8px;
+  padding: 4px; display: flex; flex-direction: column;
+}
+.demo-menu button {
+  text-align: left; background: none; border: none; color: #cfd6e4;
+  padding: 6px 10px; border-radius: 5px; font-size: 12px; cursor: pointer;
+}
+.demo-menu button:hover { background: rgba(255, 255, 255, .06); }
+.demo-menu-head {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .4px;
+  color: #7d8596; padding: 6px 10px 2px; border-top: 1px solid #1d222d;
+  margin-top: 3px;
+}
+
 /* ---------- import options dialog ---------- */
 .import-dialog-backdrop {
   position: fixed; inset: 0; z-index: 90;

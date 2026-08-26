@@ -140,10 +140,37 @@ export default function App() {
     [ingest, setLoading, setWarnings],
   );
 
+  /**
+   * Demo picker (v2): the built-in gearbox plus five benchmark assemblies
+   * from Assemble-Them-All (Tian et al., MIT CSAIL — see scripts/
+   * build-ata-models.mjs). ATA models load like real imports: through the
+   * options dialog with the sequence-planner opt-in.
+   */
+  const [demoPickerOpen, setDemoPickerOpen] = useState(false);
+
   const openDemo = useCallback(() => {
     const { root, name } = makeDemoAssembly();
     ingest(root, 'demo://gearbox', name, 'built-in demo', { skipDialog: true });
+    setDemoPickerOpen(false);
   }, [ingest]);
+
+  const openAtaModel = useCallback(
+    async (file: string, name: string) => {
+      setDemoPickerOpen(false);
+      setLoading(true);
+      try {
+        const url = `${import.meta.env.BASE_URL}models/${file}`;
+        const loader = new GLTFLoader();
+        const gltf = await loader.loadAsync(url);
+        ingest(gltf.scene as unknown as THREE.Group, url, name, file);
+      } catch (err) {
+        setWarnings([`Failed to load ${name}: ${(err as Error).message}`]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [ingest, setLoading, setWarnings],
+  );
 
   const openProject = useCallback(
     async (file: File) => {
@@ -308,7 +335,20 @@ export default function App() {
           />
         </label>
 
-        <button className="btn" onClick={openDemo}>Demo model</button>
+        <div className="demo-wrap">
+          <button className="btn" onClick={() => setDemoPickerOpen((v) => !v)}>Demo models ▾</button>
+          {demoPickerOpen && (
+            <div className="demo-menu">
+              <button onClick={openDemo}>Gearbox (built-in, 28 parts)</button>
+              <div className="demo-menu-head">Assemble-Them-All benchmarks</div>
+              <button onClick={() => openAtaModel('ata-00031.glb', 'ATA Beam Joint')}>Beam Joint (3 parts)</button>
+              <button onClick={() => openAtaModel('ata-00026.glb', 'ATA Latch Block')}>Latch Block (4 parts)</button>
+              <button onClick={() => openAtaModel('ata-00014.glb', 'ATA Clamp')}>Clamp (5 parts)</button>
+              <button onClick={() => openAtaModel('ata-00057.glb', 'ATA Housing Stack')}>Housing Stack (7 parts)</button>
+              <button onClick={() => openAtaModel('ata-00024.glb', 'ATA Bracket Set')}>Bracket Set (10 parts)</button>
+            </div>
+          )}
+        </div>
 
         <div className="spacer" />
 
@@ -378,7 +418,7 @@ export default function App() {
                   Drop a <b>.step</b> file straight in — no conversion needed.<br />
                   Export each solid as a <b>separate named object</b> — do not merge.
                 </p>
-                <button className="btn big" onClick={openDemo}>Load demo model</button>
+                <button className="btn big" onClick={() => setDemoPickerOpen(true)}>Load a demo model</button>
               </div>
             )}
             <Viewport

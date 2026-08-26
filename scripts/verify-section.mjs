@@ -4,7 +4,8 @@ const page = await b.newPage({ viewport: { width: 1500, height: 950 } });
 const errors = [];
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text().slice(0, 140)));
 await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
-await page.getByRole('button', { name: 'Demo model', exact: true }).click();
+await page.getByRole('button', { name: /demo models/i }).click();
+await page.getByRole('button', { name: /gearbox/i }).click();
 await page.waitForTimeout(2500);
 
 let pass = 0, fail = 0;

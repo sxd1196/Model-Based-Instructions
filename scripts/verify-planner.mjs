@@ -19,7 +19,7 @@ check('import options dialog appears', (await page.locator('.import-dialog').cou
 // opt IN to the planner
 await page.locator('.import-opt input[type=checkbox]').check();
 await page.getByRole('button', { name: /run planner/i }).click();
-await page.waitForTimeout(8000); // sweep loop
+for (let i = 0; i < 240; i++) { await page.waitForTimeout(2000); if (await page.evaluate(() => !!(window.__store && window.__store.getState().draftReview))) break; }
 
 const review = await page.evaluate(() => window.__store.getState().draftReview);
 check('draft review installed', review !== null);
@@ -78,7 +78,7 @@ check('draft steps animate through the evaluator', displaced.every((d) => d > 5)
 
 // ---- per-step reject, then accept
 const stepCountBefore = ops.length;
-await page.locator('.draft-step').nth(1).locator('.draft-step-actions button').nth(1).click();
+await page.locator('.draft-step:not(.unplanned)').last().locator('.draft-step-actions button').nth(1).click();
 await page.waitForTimeout(200);
 await page.getByRole('button', { name: /use this draft/i }).click();
 await page.waitForTimeout(400);

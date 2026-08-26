@@ -5,6 +5,11 @@
  * instructions, provenance meta).
  */
 import { describe, expect, it } from 'vitest';
+import { vi } from 'vitest';
+
+// The v2 kernel does real edge-sampled penetration math — the gearbox plan
+// takes ~5-8s. Worth it: these are the tests that keep the planner honest.
+vi.setConfig({ testTimeout: 120_000 });
 import * as THREE from 'three';
 import { buildAssemblyFromScene, indexScene } from '@/cad/loadGltf';
 import { makeDemoAssembly } from '@/cad/demo';

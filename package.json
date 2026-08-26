@@ -19,7 +19,8 @@
     "verify:lanes": "node scripts/verify-lanes.mjs",
     "verify:popout": "node scripts/verify-popout.mjs",
     "verify:section": "node scripts/verify-section.mjs",
-    "verify:planner": "node scripts/verify-planner.mjs"
+    "verify:planner": "node scripts/verify-planner.mjs",
+    "verify:planner-ata": "node scripts/verify-planner-ata.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",

@@ -56,33 +56,45 @@ function boundsOf(ids: string[], geoms: Map<string, PartGeom>) {
 }
 
 /**
- * Camera for a step: three-quarter view of the movers + context, positioned
- * so the removal direction crosses the view instead of pointing at it.
+ * Camera for a step: three-quarter view of the WHOLE remaining assembly with
+ * the mover's full travel visible. v1 framed the moving part tight — "too
+ * zoomed in" (user) — a work instruction frames the assembly with the action
+ * in context, and the shot must contain where the part GOES, not just where
+ * it starts.
  */
 function cameraFor(
   step: PlannedStep,
   geoms: Map<string, PartGeom>,
+  assemblyCentre: THREE.Vector3,
   assemblyRadius: number,
 ): CameraPose {
-  const { centre, radius } = boundsOf(step.parts, geoms);
-  // Frame the movers with context: never tighter than a third of the model.
-  const frameR = Math.max(radius * 3.2, assemblyRadius * 1.1);
+  const { centre: moverCentre } = boundsOf(step.parts, geoms);
 
-  // Base three-quarter direction, then nudge perpendicular to the removal
-  // axis so the motion reads as lateral travel on screen.
+  // The shot's subject: assembly centre pulled slightly toward the action.
+  const subject = assemblyCentre.clone().lerp(moverCentre, 0.25);
+
+  // Radius must cover the assembly AND the parked position of the mover.
+  const parked = moverCentre.clone();
+  if (step.dir) {
+    const v = DIR_VEC[step.dir];
+    parked.addScaledVector(v, step.distance);
+  }
+  const frameR = Math.max(
+    assemblyRadius * 1.45,
+    subject.distanceTo(parked) * 1.15,
+  );
+
   const view = new THREE.Vector3(1, -1, 0.65);
   if (step.dir) {
     const d = DIR_VEC[step.dir];
-    // If the removal axis is nearly parallel to the view, rotate the view 90°
-    // around Z to put the motion across the screen.
     if (Math.abs(view.clone().normalize().dot(d)) > 0.75) {
       view.set(-1, -1, 0.65);
     }
   }
-  const position = centre.clone().add(view.normalize().multiplyScalar(frameR));
+  const position = subject.clone().add(view.normalize().multiplyScalar(frameR * 2.1));
   return {
     position: [position.x, position.y, position.z],
-    target: [centre.x, centre.y, centre.z],
+    target: [subject.x, subject.y, subject.z],
     fov: 45,
   };
 }
@@ -106,6 +118,7 @@ export function draftOperations(
 ): DraftResult {
   const all = new THREE.Box3();
   for (const g of geoms.values()) all.union(g.aabb);
+  const assemblyCentre = all.getCenter(new THREE.Vector3());
   const assemblyRadius = Math.max(all.getSize(new THREE.Vector3()).length() / 2, 50);
 
   const operations: Operation[] = [];
@@ -115,13 +128,26 @@ export function draftOperations(
   steps.forEach((step, i) => {
     const id = uid();
 
+    /**
+     * Park distance (v2): assembly-scaled and STAGGERED by removal order,
+     * exploded-view style. v1 parked at clearance + 3/4 part-length — a
+     * bolt parked 20mm from a 500mm machine ("nowhere near far enough"),
+     * and every round parked at the same shell, leaving early parts sitting
+     * inside later parts' escape paths. Staggering by round means each
+     * wave lands one shell farther out than the last.
+     */
+    const parkDistance = step.unplanned
+      ? 0
+      : Math.max(step.distance, assemblyRadius * 0.55) +
+        assemblyRadius * 0.3 * (step.round - 1);
+
     // ---- tracks: pure world translation dir*distance, expressed per parent
     // cluster with the SAME math a gizmo drag commits (bolt-circle safe).
     const tracks: Track[] = [];
     if (!step.unplanned && step.dir) {
       const v = DIR_VEC[step.dir];
       const delta: [number, number, number] = [
-        v.x * step.distance, v.y * step.distance, v.z * step.distance,
+        v.x * parkDistance, v.y * parkDistance, v.z * parkDistance,
       ];
       for (const cluster of clusterByParentFrame(assembly, step.parts)) {
         const move = clusterMoveFromDrag(
@@ -140,8 +166,9 @@ export function draftOperations(
     // ---- camera: recut only when the action moves regions.
     const { centre } = boundsOf(step.parts, geoms);
     let camera: CameraPose | null = null;
+    const stepForCam = { ...step, distance: parkDistance };
     if (!step.unplanned && needsRecut(lastCamCentre, centre, assemblyRadius)) {
-      camera = cameraFor(step, geoms, assemblyRadius);
+      camera = cameraFor(stepForCam, geoms, assemblyCentre, assemblyRadius);
       lastCamCentre = centre;
     }
 

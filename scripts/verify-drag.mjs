@@ -28,7 +28,8 @@ const check = (name, pass, detail = '') => {
 };
 
 await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
-await page.getByRole('button', { name: 'Demo model', exact: true }).click();
+await page.getByRole('button', { name: /demo models/i }).click();
+await page.getByRole('button', { name: /gearbox/i }).click();
 await page.waitForTimeout(2500);
 
 const canvas = page.locator('canvas').first();
@@ -199,7 +200,8 @@ check('GIZMO HANDLE STAYS ON THE PART after a commit',
 // still down, not on release. This drives PivotControls' own hit-testing, so
 // it also proves the combined widget's handles are actually grabbable.
 await page.reload({ waitUntil: 'networkidle' });
-await page.getByRole('button', { name: 'Demo model', exact: true }).click();
+await page.getByRole('button', { name: /demo models/i }).click();
+await page.getByRole('button', { name: /gearbox/i }).click();
 await page.waitForTimeout(2500);
 
 await page.evaluate(() => {

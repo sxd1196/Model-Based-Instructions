@@ -5,7 +5,8 @@ const page = await ctx.newPage();
 const errors = [];
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text().slice(0, 150)));
 await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
-await page.getByRole('button', { name: 'Demo model', exact: true }).click();
+await page.getByRole('button', { name: /demo models/i }).click();
+await page.getByRole('button', { name: /gearbox/i }).click();
 await page.waitForTimeout(2500);
 
 let pass = 0, fail = 0;
