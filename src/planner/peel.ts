@@ -250,12 +250,39 @@ export function planSequence(
     };
     visit(forest, null);
 
-    // Fasteners-first among this round's feasible units: smallest volume
-    // moves first (bolts before the cover, handles before the body). Tree
-    // order broke this — first-found was whatever the CAD listed first.
-    const found = candidates.length
-      ? candidates.reduce((a, b) => (b.volume < a.volume ? b : a))
-      : null;
+    /**
+     * Selection among this round's feasible units (v4.1, from bake-off
+     * findings §7b): prefer CLEAN exits over bore-drags, then fasteners
+     * first.
+     *
+     * dragScore = summed rest-penetration depth against still-assembled
+     * parts (mm) — how much interference envelope the unit must slide
+     * through to leave. A pinion pulled across a bearing seat scores high;
+     * the same pinion after the bearing left scores 0. Choosing min-drag
+     * first naturally VACATES bores before extraction (shaft waits for its
+     * bearings, gears wait for the shaft to clear). Volume breaks ties
+     * (fasteners first), then name for determinism.
+     */
+    const dragOf = (u: Unit): number => {
+      let drag = 0;
+      for (const c of rankedDirectionsDetailed(u.meshes, remaining, geoms).contacts) {
+        drag += c.depth;
+      }
+      return drag;
+    };
+    let found: (Candidate & { drag: number }) | null = null;
+    for (const c of candidates) {
+      const scored = { ...c, drag: dragOf(c.unit) };
+      if (
+        !found ||
+        scored.drag < found.drag - 0.25 ||
+        (Math.abs(scored.drag - found.drag) <= 0.25 &&
+          (scored.volume < found.volume ||
+            (scored.volume === found.volume && scored.unit.name < found.unit.name)))
+      ) {
+        found = scored;
+      }
+    }
 
     if (!found) {
       const leftovers = [...remaining.keys()];

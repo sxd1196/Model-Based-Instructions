@@ -187,13 +187,25 @@ export function evaluateSequenceCollisions(
       for (let j = i + 1; j < parts.length; j++) {
         const key = parts[i].id + '|' + parts[j].id;
         const restLevel = restDeep.get(key) ?? 0;
+        /**
+         * CONTACT-ENVELOPE verdict (v2 of the oracle, from bake-off run 1
+         * findings): a pair in rest contact/overlap may SLIDE while its
+         * penetration stays inside the rest envelope (rest depth + small
+         * ABSOLUTE slack — multiplicative slack legalized a 50mm bearing
+         * pass-through on deep rest overlaps, measured in bake-off run 3 — same shape as the planner's budget but measured by this
+         * module's own method on full-res meshes). A bearing leaving its
+         * bore rides the envelope the whole way and is legal; any move
+         * that DEEPENS contact beyond the envelope convicts. Pairs with no
+         * rest contact keep a zero envelope — plain honest collision.
+         */
+        const envelope = restLevel > 0 ? restLevel + Math.min(restLevel * 0.15, 2) + 0.6 : 0;
         pairsChecked++;
         const d = Math.max(
           oracleDepth(parts[i], worlds.get(parts[i].id)!, parts[j], worlds.get(parts[j].id)!),
           oracleDepth(parts[j], worlds.get(parts[j].id)!, parts[i], worlds.get(parts[i].id)!),
         );
-        const excess = d - Math.max(restLevel * 1.25, 0) ;
-        if (d > tolerance && excess > tolerance * 0.5) {
+        const excess = d - envelope;
+        if (excess > tolerance) {
           const prev = worst.get(key);
           if (!prev || d > prev.depthMm) {
             let stepIndex = 0;

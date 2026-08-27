@@ -769,15 +769,26 @@ export function canSweepOutVec(
 
       const span = end - start;
       const rc = restContactOf(m, f);
-      const budget = rc ? rc.depth * 1.3 + 0.6 : 0;
+      const budget = rc ? rc.depth + Math.min(rc.depth * 0.15, 2) + 0.6 : 0;
       const n = budget > 0
         ? Math.min(Math.max(3, Math.ceil(span / MAX_SAMPLE_STEP)), 8)
         : Math.min(Math.max(3, Math.ceil(span / MAX_SAMPLE_STEP)), 60);
       for (let s = 0; s <= n; s++) {
         const d = start + (span * s) / n;
         offset.copy(v).multiplyScalar(d);
-        if (!intersectsAt(m, offset, f)) continue;
-        if (budget <= 0) return { ok: false, blockedBy: f.id };
+        if (budget <= 0) {
+          if (intersectsAt(m, offset, f)) return { ok: false, blockedBy: f.id };
+          continue;
+        }
+        /**
+         * Touching pairs: probe DEPTH directly, never gate on the surface-
+         * intersection boolean. Found via bake-off run 3 + a manual scan:
+         * the bearing driven -Z reached 50mm penetration INSIDE the housing
+         * boss while `intersectsAt` reported false — full containment
+         * crosses no surfaces, so the depth probe was never reached and the
+         * sweep passed. penetrationDepth's inside-parity sampling detects
+         * containment; the early-exit budget keeps it cheap.
+         */
         if (penetrationDepth(m, offset, f, budget, 300) > budget) {
           return { ok: false, blockedBy: f.id };
         }

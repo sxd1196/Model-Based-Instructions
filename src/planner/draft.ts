@@ -127,31 +127,26 @@ export function draftOperations(
   let lastCamCentre: THREE.Vector3 | null = null;
   // Parked-part AABBs accumulated as steps are authored (see park v3 note).
   const parkedBoxes: { box: THREE.Box3; vec: THREE.Vector3 }[] = [];
+  const maxRound = steps.reduce((m, s) => Math.max(m, s.unplanned ? 0 : s.round), 0);
 
   steps.forEach((step, i) => {
     const id = uid();
 
     /**
-     * Park distance (v3 — parked parts are now OBSTACLES).
-     *
-     * v2 staggered park shells by round and hoped that kept lanes clear.
-     * The bake-off oracle measured the hope failing: gearbox step 9 drove
-     * the housing +Z straight through the cover parked at the +Z shell two
-     * rounds earlier (40.75mm penetration, evidence in the report). The
-     * planner only ever checked REMAINING parts; parked parts were ghosts.
-     *
-     * Fix: accumulate every parked part's AABB. For each new step, grow the
-     * park distance until (a) the mover's final AABB overlaps no parked
-     * AABB, and (b) the swept corridor from assembly to park overlaps no
-     * parked AABB whose own lane differs. Both checks are conservative
-     * (AABB-level, +5mm margin) — coarse but cheap and, unlike v2,
-     * measured by the oracle instead of assumed.
+     * Park distance (v3.2). Base: assembly-scaled, staggered INVERTED —
+     * FIRST removals park FARTHEST (real exploded-view physics: the first
+     * part off travels over everything parked after it... nothing yet).
+     * Run-2/3 finding: the original later=farther stagger forced late
+     * same-lane movers THROUGH earlier parks (housing through cover 40.75mm,
+     * Part_7 through Part_9 8.34mm). With first=farthest, a later same-lane
+     * mover's corridor ends BEFORE every earlier same-lane park by
+     * construction, enforced exactly by the interval cap below.
      */
     const stepVecEarly = vecOf(step);
     let parkDistance = step.unplanned
       ? 0
       : Math.max(step.distance, assemblyRadius * 0.55) +
-        assemblyRadius * 0.3 * (step.round - 1);
+        assemblyRadius * 0.3 * Math.max(maxRound - step.round, 0);
     if (!step.unplanned && stepVecEarly) {
       const moverBox = new THREE.Box3();
       for (const pid of step.parts) {
@@ -159,19 +154,42 @@ export function draftOperations(
         if (g) moverBox.union(g.aabb);
       }
       const MARGIN = 5;
+
+      // Exact travel interval [dMin,dMax] where the swept mover AABB
+      // overlaps a parked AABB (same closed form as the sweep kernel).
+      const overlapInterval = (box: THREE.Box3): [number, number] | null => {
+        let dMin = -Infinity;
+        let dMax = Infinity;
+        for (const axis of ['x', 'y', 'z'] as const) {
+          const va = stepVecEarly[axis];
+          if (Math.abs(va) < 1e-9) {
+            if (moverBox.max[axis] < box.min[axis] - MARGIN || moverBox.min[axis] > box.max[axis] + MARGIN) return null;
+            continue;
+          }
+          const lo = (box.min[axis] - MARGIN - moverBox.max[axis]) / va;
+          const hi = (box.max[axis] + MARGIN - moverBox.min[axis]) / va;
+          dMin = Math.max(dMin, Math.min(lo, hi));
+          dMax = Math.min(dMax, Math.max(lo, hi));
+        }
+        return dMax > dMin ? [dMin, dMax] : null;
+      };
+
+      // Same-lane parks CAP the travel (stop short); cross-lane parks the
+      // corridor must dodge (grow past or the cap keeps us clear).
+      let cap = Infinity;
+      for (const parked of parkedBoxes) {
+        const iv = overlapInterval(parked.box);
+        if (!iv) continue;
+        if (parked.vec.dot(stepVecEarly) > 0.9) {
+          if (iv[0] > 0) cap = Math.min(cap, iv[0]);
+        }
+      }
+      if (Number.isFinite(cap)) parkDistance = Math.min(parkDistance, cap);
+
       const corridorClear = (dist: number): boolean => {
-        // Corridor = mover box swept from 0 to dist along the vector.
-        const swept = moverBox.clone();
-        const end = moverBox.clone().translate(stepVecEarly.clone().multiplyScalar(dist));
-        swept.union(end);
-        swept.expandByScalar(MARGIN);
-        const final = end.expandByScalar(MARGIN);
         for (const parked of parkedBoxes) {
-          if (final.intersectsBox(parked.box)) return false;
-          // Corridor conflict only matters when the parked part is not
-          // travelling the same lane (same-lane parts left earlier and sit
-          // FARTHER out by construction once the final check passes).
-          if (parked.vec.dot(stepVecEarly) < 0.9 && swept.intersectsBox(parked.box)) return false;
+          const iv = overlapInterval(parked.box);
+          if (iv && iv[0] < dist && iv[1] > 0) return false;
         }
         return true;
       };
