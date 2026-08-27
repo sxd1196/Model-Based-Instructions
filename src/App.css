@@ -309,6 +309,12 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .draft-step.approved .draft-step-title { color: #9fdf9f; }
 .draft-step.rejected .draft-step-title { color: #7d5a5a; text-decoration: line-through; }
 .draft-step.unplanned .draft-step-title { color: #dfb35a; }
+.draft-step.shear .draft-step-title { color: #e8a06a; }
+.shear-tag {
+  margin-left: 6px; font-size: 9px; font-weight: 700; letter-spacing: .3px;
+  background: #3a2510; color: #f0a860; border: 1px solid #7d5a2f;
+  padding: 1px 5px; border-radius: 3px;
+}
 .draft-step-index { color: #7d8596; text-align: right; }
 .draft-step-reason { color: #7d8596; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .draft-step-actions { display: flex; gap: 4px; }

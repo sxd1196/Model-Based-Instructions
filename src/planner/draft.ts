@@ -190,6 +190,9 @@ export function draftOperations(
       meta: {
         plannedBy: 'sequence-planner-v1',
         planReason: step.reason,
+        // Quantitative decision record (contact evidence, alignment, shear
+        // flag) — carried for the review UI and downstream inspection.
+        ...(step.audit ? { planAudit: JSON.stringify(step.audit), ...(step.audit.shear ? { planShear: 'true' } : {}) } : {}),
         ...(step.unplanned ? { planUnplanned: 'true' } : {}),
       },
     };

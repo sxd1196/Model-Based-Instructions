@@ -27,12 +27,35 @@ import type { Assembly } from '@/domain/schema';
 import {
   collectPartGeoms,
   feasibleDirections,
+  rankedDirectionsDetailed,
   removalDistance,
   resetContactCache,
+  DIR_VEC,
+  type ContactRecord,
   type Dir,
   type PartGeom,
 } from './feasibility';
 import * as THREE from 'three';
+
+/** Quantitative decision record carried by every planned step (no guessing:
+ * the numbers that produced the direction choice travel WITH the step). */
+export interface StepAudit {
+  /** Weighted contact push-out vector (world). */
+  push: [number, number, number];
+  pushMag: number;
+  /** Cosine alignment of the CHOSEN direction with the push-out (-1..1). */
+  align: number;
+  /** Per-partner contact evidence for the moving unit at decision time. */
+  contacts: ContactRecord[];
+  /** Directions that were feasible, with their alignment scores. */
+  feasible: { dir: Dir; align: number }[];
+  /**
+   * True when the unit had a meaningful contact push-out but the chosen
+   * (only feasible) direction moves ACROSS it rather than along it —
+   * the 'two planes slide past each other' pattern. Flagged for review.
+   */
+  shear: boolean;
+}
 
 export interface PlannedStep {
   /** Mesh ids that move in this step (a unit's meshes, or an identical batch). */
@@ -48,6 +71,8 @@ export interface PlannedStep {
   round: number;
   /** True for the leftover step when the peel jammed. */
   unplanned?: boolean;
+  /** Numbers behind the decision (absent on the unplanned step). */
+  audit?: StepAudit;
 }
 
 /** A BOM-tree node the planner can move as one rigid unit. */
@@ -135,7 +160,7 @@ export function planSequence(
      * unit (largest wins because parents are tried before children). Then
      * batch its identical free siblings.
      */
-    type Candidate = { unit: Unit; dir: Dir; parent: Unit | null; volume: number };
+    type Candidate = { unit: Unit; dir: Dir; parent: Unit | null; volume: number; audit: StepAudit };
     const candidates: Candidate[] = [];
 
     const visit = (units: Unit[], parent: Unit | null): void => {
@@ -157,7 +182,34 @@ export function planSequence(
         if (dirs.length) {
           let volume = 0;
           for (const m of u.meshes) volume += geoms.get(m)?.volume ?? 0;
-          candidates.push({ unit: u, dir: dirs[0].dir, parent, volume });
+
+          // Quantify the decision (user: 'no more guessing').
+          const det = rankedDirectionsDetailed(u.meshes, remaining, geoms);
+          const alignOf = (d: Dir) =>
+            det.pushMag > 1e-6
+              ? det.push.clone().normalize().dot(DIR_VEC[d])
+              : 0;
+          const feasibleScored = dirs.map((d) => ({ dir: d.dir, align: alignOf(d.dir) }));
+          // Among FEASIBLE directions, take the best contact-aligned one.
+          feasibleScored.sort((a, b) => b.align - a.align);
+          const chosen = feasibleScored[0];
+          // Total contact evidence (sum of patch weights) vs the NET push:
+          // a sandwiched part has strong contacts that cancel (pushMag ~0),
+          // and that is STILL a shear situation when the move is lateral.
+          const totalContact = det.contacts.reduce(
+            (n, c) => n + c.samples * Math.min(c.coherence, 1), 0);
+          const audit: StepAudit = {
+            push: [det.push.x, det.push.y, det.push.z],
+            pushMag: det.pushMag,
+            align: chosen.align,
+            contacts: det.contacts,
+            feasible: feasibleScored,
+            // Meaningful contact evidence but the chosen direction moves
+            // ACROSS it (align < 0.35 ~ >70° off the push-out) — the
+            // 'planes slide past each other' pattern, flagged for review.
+            shear: totalContact > 3 && chosen.align < 0.35,
+          };
+          candidates.push({ unit: u, dir: chosen.dir, parent, volume, audit });
           // Feasible whole: don't descend — the unit leaves as one piece.
           continue;
         }
@@ -210,6 +262,13 @@ export function planSequence(
       batch.length > 1 ? `${batch.length}× ${familyName(unit.name)}` : unit.name;
     const kind =
       unit.children.length > 0 || unit.meshes.length > 1 ? 'sub-assembly' : 'part';
+    const { audit } = found;
+    // Human-readable evidence in the review reason: alignment says how well
+    // the move agrees with the mating contacts (1 = straight off the face).
+    const evidence =
+      audit.pushMag > 1e-6
+        ? `contact alignment ${audit.align.toFixed(2)}${audit.shear ? ' — SHEAR: moves across a mating face, review' : ''}`
+        : 'no contact data (free-floating)';
     steps.push({
       parts: meshes,
       dir,
@@ -217,9 +276,10 @@ export function planSequence(
       label,
       reason:
         batch.length > 1
-          ? `${batch.length} identical ${kind === 'sub-assembly' ? 'sub-assemblies' : 'parts'} free along ${dir}, contact-guided (round ${round})`
-          : `${kind} free along ${dir}, contact-guided (round ${round})`,
+          ? `${batch.length} identical ${kind === 'sub-assembly' ? 'sub-assemblies' : 'parts'} free along ${dir}; ${evidence} (round ${round})`
+          : `${kind} free along ${dir}; ${evidence} (round ${round})`,
       round,
+      audit,
     });
     for (const m of meshes) remaining.delete(m);
   }

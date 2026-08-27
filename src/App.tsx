@@ -87,9 +87,53 @@ export default function App() {
         const { operations, unplannedOpIds } = draftOperations(steps, assembly, geoms);
 
         useStore.getState().beginDraftReview(operations, unplannedOpIds);
+
+        /**
+         * PLAN REPORT (user requirement: quantitative feedback loop, not
+         * eyeballing). Every decision with its numbers: chosen direction,
+         * contact alignment, per-partner contact evidence, shear flags.
+         * Downloadable from the review banner; also on window.__planReport
+         * so a verification script (or the user pasting it back) can audit
+         * exactly what the algorithm believed and why.
+         */
+        const nameOf = (id: string) => assembly.parts[id]?.name ?? id;
+        const report = {
+          generated: new Date().toISOString(),
+          model: assembly.name,
+          steps: steps.map((s, i) => ({
+            n: i + 1,
+            label: s.label,
+            parts: s.parts.map(nameOf),
+            dir: s.dir,
+            distanceMm: Math.round(s.distance),
+            round: s.round,
+            unplanned: !!s.unplanned,
+            ...(s.audit
+              ? {
+                  align: +s.audit.align.toFixed(3),
+                  pushOut: s.audit.push.map((x) => +x.toFixed(2)),
+                  shear: s.audit.shear,
+                  feasibleDirs: s.audit.feasible.map(
+                    (f) => `${f.dir}@${f.align.toFixed(2)}`,
+                  ),
+                  contacts: s.audit.contacts.map((c) => ({
+                    partner: nameOf(c.partner),
+                    patchSamples: c.samples,
+                    gradientMag: +c.coherence.toFixed(2),
+                    restDepthMm: +c.depth.toFixed(2),
+                    normal: c.normal.map((x) => +x.toFixed(2)),
+                  })),
+                }
+              : {}),
+          })),
+        };
+        (window as unknown as { __planReport?: unknown }).__planReport = report;
+
+        const shearCount = steps.filter((s) => s.audit?.shear).length;
         setWarnings([
           `Draft ready: ${operations.length - unplannedOpIds.length} steps proposed` +
             (unplannedOpIds.length ? `, ${unplannedOpIds.length} left unresolved` : '') +
+            (shearCount ? `, ${shearCount} flagged ⚠ shear (move across a mating face — check those first)` : '') +
             '. Review below — nothing is final until you accept.',
         ]);
       } catch (err) {

@@ -41,6 +41,21 @@ export function DraftReviewBanner() {
           {rejected > 0 && ` · ${rejected} rejected`}
         </span>
         <button onClick={togglePlay} title="Play the draft through">▶ Play</button>
+        <button
+          title="Download the quantitative plan report (per-step direction scores, contact evidence, shear flags) — share it to debug the algorithm"
+          onClick={() => {
+            const report = (window as unknown as { __planReport?: unknown }).__planReport;
+            if (!report) return;
+            const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'plan-report.json';
+            a.click();
+            URL.revokeObjectURL(a.href);
+          }}
+        >
+          ⇩ Report
+        </button>
         <div className="spacer" />
         <button
           className="draft-accept"
@@ -65,19 +80,21 @@ export function DraftReviewBanner() {
         {ops.map((op, i) => {
           const v = verdicts[op.id] ?? 'pending';
           const isUnplanned = !!op.meta.planUnplanned;
+          const isShear = !!op.meta.planShear;
           return (
             <div
               key={op.id}
               className={
                 `draft-step ${v}` +
                 (op.id === activeOperationId ? ' active' : '') +
-                (isUnplanned ? ' unplanned' : '')
+                (isUnplanned ? ' unplanned' : '') +
+                (isShear ? ' shear' : '')
               }
               onClick={() => seekToOperation(op.id)}
               title={op.meta.planReason}
             >
               <span className="draft-step-index">{i + 1}</span>
-              <span className="draft-step-title">{op.title}</span>
+              <span className="draft-step-title">{op.title}{isShear && <span className="shear-tag" title="This move slides across a mating surface instead of away from it — review before accepting">⚠ shear</span>}</span>
               <span className="draft-step-reason">{op.meta.planReason}</span>
               {!isUnplanned && (
                 <span className="draft-step-actions">

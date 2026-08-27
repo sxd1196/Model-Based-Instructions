@@ -276,13 +276,22 @@ const _px = new THREE.Vector3(1, 0, 0);
 
 /**
  * Rest-contact record for a touching/overlapping pair: its baseline
- * penetration budget, and the contact normal (unit vector pointing AWAY
- * from the fixed part at the closest approach — the "push-out" direction).
+ * penetration budget, the contact normal (unit vector pointing AWAY from
+ * the fixed part — the "push-out" direction), and the contact patch size.
  */
 interface RestContact {
   depth: number;
   normal: THREE.Vector3;
+  /** How many sampled points sat within CONTACT_NEAR of the partner —
+   * a contact AREA proxy: face-on-face ≈ many, edge touch ≈ few. */
+  samples: number;
+  /** Clearance-gradient magnitude: mm of separation gained per mm of travel
+   * along the normal. ~0 means no usable direction was found. */
+  rawMag: number;
 }
+
+/** World-mm distance below which a sample point counts as "in contact". */
+const CONTACT_NEAR = 0.8;
 
 const _restContacts = new Map<string, RestContact | null>();
 function pairKey(a: string, b: string): string {
@@ -314,9 +323,19 @@ function restContactOf(a: PartGeom, b: PartGeom): RestContact | null {
   const depth = penetrationDepth(a, _zero, b);
   const touching = depth > 0 || intersectsAt(a, _zero, b);
 
-  // Contact normal via closest points between the two meshes, computed from
-  // a's sampled vertices against b's BVH: normal points from b's surface
-  // toward a — the direction a must move to separate.
+  /**
+   * Contact normal, v3 (QUANTIFIED FIX — see .smoke/planner-report):
+   * v2 used the difference vector of the SINGLE closest vertex pair. For
+   * face-on-face mating that vector's length is ~0 and its direction is
+   * tessellation noise (rawMag ≈ 0, silent +Z fallback) — measured on the
+   * gearbox: plate/gasket contact produced an unusable normal, which is
+   * exactly 'two planes slide past each other instead of away'.
+   * v3 samples MANY points of a, and for each one within CONTACT_NEAR of
+   * b's surface, votes with b's FACE NORMAL at the closest triangle
+   * (oriented outward, toward a). Plane-on-plane → hundreds of identical
+   * votes → rawMag ≈ sample count. The patch size doubles as a contact-
+   * area proxy for direction ranking.
+   */
   a.mesh.updateWorldMatrix(true, false);
   b.mesh.updateWorldMatrix(true, false);
   _matA.copy(a.mesh.matrixWorld);
@@ -324,35 +343,115 @@ function restContactOf(a: PartGeom, b: PartGeom): RestContact | null {
   _matRel.multiplyMatrices(_inv, _matA);
   const bvh = bvhOf(b.mesh.geometry as THREE.BufferGeometry);
   const pos = (a.mesh.geometry as THREE.BufferGeometry).attributes.position;
-  const v = new THREE.Vector3();
   const target = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
-  let best = Infinity;
-  const bestPoint = new THREE.Vector3();
-  const bestSurface = new THREE.Vector3();
-  const stride = Math.max(1, Math.floor(pos.count / 200));
-  for (let i = 0; i < pos.count; i += stride) {
-    v.fromBufferAttribute(pos, i).applyMatrix4(_matRel);
-    bvh.closestPointToPoint(v, target);
-    if (target.distance < best) {
-      best = target.distance;
-      bestPoint.copy(v);
-      bestSurface.copy(target.point);
+  const scaleB = new THREE.Vector3();
+  b.mesh.matrixWorld.decompose(new THREE.Vector3(), new THREE.Quaternion(), scaleB);
+  const suB = Math.abs(scaleB.x) || 1;
+
+  /**
+   * Contact patch size: sample along a's triangle edges (coarse meshes have
+   * no vertices mid-face) and count points within CONTACT_NEAR of b.
+   */
+  const aGeom = a.mesh.geometry as THREE.BufferGeometry;
+  const aIdx = aGeom.index;
+  const aTriCount = aIdx ? aIdx.count / 3 : pos.count / 3;
+  const scaleA = new THREE.Vector3();
+  a.mesh.matrixWorld.decompose(new THREE.Vector3(), new THREE.Quaternion(), scaleA);
+  const suA = Math.abs(scaleA.x) || 1;
+  const edgeStepLocal = 2.5 / suA;
+  const pA = new THREE.Vector3();
+  const pB = new THREE.Vector3();
+  const pt = new THREE.Vector3();
+  const triStrideA = Math.max(1, Math.ceil((aTriCount * 3 * 6) / 1200));
+
+  let samples = 0;
+  let bestDist = Infinity;
+  for (let t = 0; t < aTriCount; t += triStrideA) {
+    for (let e = 0; e < 3; e++) {
+      const i0 = aIdx ? aIdx.getX(t * 3 + e) : t * 3 + e;
+      const i1 = aIdx ? aIdx.getX(t * 3 + ((e + 1) % 3)) : t * 3 + ((e + 1) % 3);
+      pA.fromBufferAttribute(pos, i0).applyMatrix4(_matRel);
+      pB.fromBufferAttribute(pos, i1).applyMatrix4(_matRel);
+      const len = pA.distanceTo(pB);
+      const n = Math.min(Math.max(1, Math.ceil(len / edgeStepLocal)), 12);
+      for (let s = 0; s <= n; s++) {
+        pt.lerpVectors(pA, pB, s / n);
+        bvh.closestPointToPoint(pt, target);
+        const worldDist = target.distance * suB;
+        if (worldDist < bestDist) bestDist = worldDist;
+        if (worldDist <= CONTACT_NEAR) samples++;
+      }
     }
   }
 
-  // Only meaningful when the pair is actually close (< 1.5mm) or touching.
-  if (!touching && best * 1 /* local≈world for uniform scale */ > 1.5) {
+  // Not touching and no near-contact patch: not a contact pair.
+  if (!touching && (samples === 0 || bestDist > 1.5)) {
     _restContacts.set(key, null);
     return null;
   }
 
-  // b-local -> world direction from surface point to a's vertex.
-  const normal = bestPoint.sub(bestSurface);
-  normal.applyMatrix4(new THREE.Matrix4().extractRotation(b.mesh.matrixWorld));
+  /**
+   * Contact normal via the CLEARANCE GRADIENT (v3 — quantified fix).
+   *
+   * v2 used the closest-vertex-pair difference vector: on face-on-face
+   * mates its length is ~0 and its direction is tessellation noise, so
+   * mating planes were invisible and the planner chose lateral slides —
+   * the user's 'two planes slid past each other'. Face-normal voting was
+   * tried and measured (coherence 0.15 on two mating plates: perimeter
+   * points vote for side faces, votes cancel). The defensible measure:
+   * probe ±1.5mm along each axis and take the gradient of SEPARATION
+   * (min distance when clear, -penetration when overlapping). The push-out
+   * direction is the one that opens the gap fastest — for a mating plane
+   * that is exactly its normal, regardless of tessellation.
+   */
+  const PROBE = 1.5;
+  const sepAt = (offset: THREE.Vector3): number => {
+    const pen = penetrationDepth(a, offset, b, Infinity, 400);
+    if (pen > 0) return -pen;
+    // Clear: min distance via a bounded edge walk.
+    _matA.copy(a.mesh.matrixWorld);
+    _matA.premultiply(new THREE.Matrix4().makeTranslation(offset.x, offset.y, offset.z));
+    _matRel.multiplyMatrices(_inv, _matA);
+    let minD = Infinity;
+    const stride2 = triStrideA * 2;
+    for (let t = 0; t < aTriCount; t += stride2) {
+      for (let e = 0; e < 3; e += 2) {
+        const i0 = aIdx ? aIdx.getX(t * 3 + e) : t * 3 + e;
+        pA.fromBufferAttribute(pos, i0).applyMatrix4(_matRel);
+        bvh.closestPointToPoint(pA, target);
+        const d = target.distance * suB;
+        if (d < minD) minD = d;
+      }
+    }
+    return minD;
+  };
+
+  const base = sepAt(_zero);
+  const grad = new THREE.Vector3();
+  const probeVec = new THREE.Vector3();
+  for (const [dx, dy, dz] of [[1, 0, 0], [0, 1, 0], [0, 0, 1]] as const) {
+    probeVec.set(dx * PROBE, dy * PROBE, dz * PROBE);
+    const plus = sepAt(probeVec);
+    probeVec.multiplyScalar(-1);
+    const minus = sepAt(probeVec);
+    // Central difference, normalized by probe distance.
+    grad.x += dx * (plus - minus) / (2 * PROBE);
+    grad.y += dy * (plus - minus) / (2 * PROBE);
+    grad.z += dz * (plus - minus) / (2 * PROBE);
+  }
+  // Restore _matRel for any later users (sepAt clobbered it).
+  _matA.copy(a.mesh.matrixWorld);
+  _matRel.multiplyMatrices(_inv, _matA);
+
+  // rawMag: gradient magnitude (0..~1; 1 = separation grows 1mm per mm of
+  // travel — a clean planar mate). Doubles as the coherence signal.
+  const rawMag = grad.length();
+  const normal = grad.clone();
   if (normal.lengthSq() < 1e-12) normal.set(0, 0, 1);
   normal.normalize();
+  void base;
 
-  const rec: RestContact = { depth, normal };
+  const rec: RestContact = { depth, normal, samples, rawMag };
   _restContacts.set(key, rec);
   return rec;
 }
@@ -387,7 +486,18 @@ export function pushOutVector(
       // Penetrating pairs (unmodelled threads etc.) have ill-defined normals
       // — closest-point from an INSIDE vertex points anywhere. Only clean
       // surface contacts (depth ≈ 0) vote on the escape direction.
-      if (rc && rc.depth < 0.5) out.add(rc.normal);
+      // v3: votes are WEIGHTED by contact patch size (sample count) — a
+      // full mating face outvotes an incidental edge graze — and gated on
+      // rawMag/samples coherence: a patch whose face normals cancel each
+      // other (wrapping contact) carries no directional information.
+      if (rc && rc.depth < 0.5 && rc.samples > 0) {
+        // rawMag = clearance-gradient magnitude: ~1 for a clean planar mate,
+        // ~0 when moving doesn't change separation (no directional info).
+        const coherence = Math.min(rc.rawMag, 1);
+        if (coherence > 0.3) {
+          out.addScaledVector(rc.normal, rc.samples * coherence);
+        }
+      }
     }
   }
   return out;
@@ -399,15 +509,68 @@ export function rankedDirections(
   remaining: Map<string, PartGeom>,
   geoms: Map<string, PartGeom>,
 ): Dir[] {
+  return rankedDirectionsDetailed(movingIds, remaining, geoms).scores.map((s) => s.dir);
+}
+
+export interface DirScore {
+  dir: Dir;
+  /** Cosine alignment with the contact push-out vector (-1..1); 0 = no data. */
+  align: number;
+}
+
+export interface ContactRecord {
+  partner: string;
+  samples: number;
+  /** Clearance-gradient magnitude, capped at 1: 1 = clean planar mate. */
+  coherence: number;
+  depth: number;
+  normal: [number, number, number];
+}
+
+/**
+ * The QUANTITATIVE view of a direction decision (user requirement: no more
+ * guessing — every choice must be explainable with numbers). Returns the
+ * weighted push-out vector, each direction's alignment score, and the
+ * per-partner contact evidence that produced them.
+ */
+export function rankedDirectionsDetailed(
+  movingIds: string[],
+  remaining: Map<string, PartGeom>,
+  geoms: Map<string, PartGeom>,
+): { push: THREE.Vector3; pushMag: number; scores: DirScore[]; contacts: ContactRecord[] } {
+  const contacts: ContactRecord[] = [];
+  const movingSet = new Set(movingIds);
+  for (const id of movingIds) {
+    const g = geoms.get(id);
+    if (!g) continue;
+    for (const [oid, other] of remaining) {
+      if (movingSet.has(oid)) continue;
+      const rc = restContactOf(g, other);
+      if (rc) {
+        contacts.push({
+          partner: oid,
+          samples: rc.samples,
+          coherence: Math.min(rc.rawMag, 1),
+          depth: rc.depth,
+          normal: [rc.normal.x, rc.normal.y, rc.normal.z],
+        });
+      }
+    }
+  }
+
   const push = pushOutVector(movingIds, remaining, geoms);
-  if (push.lengthSq() < 1e-9) return [...DIR_ORDER];
-  push.normalize();
-  const score = (d: Dir) => push.dot(DIR_VEC[d]);
-  return [...DIR_ORDER].sort((a, b) => {
-    const diff = score(b) - score(a);
+  const pushMag = push.length();
+  const unit = pushMag > 1e-9 ? push.clone().normalize() : null;
+  const scores: DirScore[] = DIR_ORDER.map((dir) => ({
+    dir,
+    align: unit ? unit.dot(DIR_VEC[dir]) : 0,
+  }));
+  scores.sort((a, b) => {
+    const diff = b.align - a.align;
     if (Math.abs(diff) > 1e-6) return diff;
-    return DIR_ORDER.indexOf(a) - DIR_ORDER.indexOf(b); // stable gravity tiebreak
+    return DIR_ORDER.indexOf(a.dir) - DIR_ORDER.indexOf(b.dir);
   });
+  return { push, pushMag, scores, contacts };
 }
 
 /**

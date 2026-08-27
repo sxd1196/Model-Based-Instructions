@@ -69,6 +69,23 @@ check('no NEW deep interpenetration during the draft animation',
   violations.length === 0,
   violations.length ? JSON.stringify(violations.slice(0, 4)) : 'clean across 60 frames');
 
+// QUANTITATIVE AUDIT (user requirement: no eyeballing) — the plan report
+// must exist, carry contact evidence, and every non-flagged step must be
+// well-aligned with its mating contacts. Shear steps must be flagged in UI.
+const report = await page.evaluate(() => window.__planReport);
+check('plan report exists with per-step numbers', !!report && report.steps.length > 0);
+const plannedSteps = report.steps.filter((s) => !s.unplanned);
+const contactSteps = plannedSteps.filter((s) => (s.contacts ?? []).length > 0);
+check('contact evidence present on mating steps', contactSteps.length > 0,
+  contactSteps.map((s) => s.label + ' patch=' + s.contacts[0].patchSamples).join('; '));
+const bad = plannedSteps.filter((s) => !s.shear && s.pushOut && Math.hypot(...s.pushOut) > 3 && s.align < 0.35);
+check('every low-alignment move is FLAGGED as shear, never silent', bad.length === 0,
+  bad.map((s) => s.label + ' align=' + s.align).join('; ') || 'no silent shears');
+const shearCount = plannedSteps.filter((s) => s.shear).length;
+const uiShearTags = await page.locator('.shear-tag').count();
+check('shear flags surface in the review UI', uiShearTags === shearCount,
+  );
+
 await page.screenshot({ path: '.smoke/v2-ata.png' });
 check('no console errors', errors.length === 0, errors[0] ?? 'clean');
 console.log(`\n${pass}/${pass + fail} v2 checks passed`);

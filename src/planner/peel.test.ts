@@ -17,7 +17,7 @@ import * as THREE from 'three';
 import { buildAssemblyFromScene, indexScene } from '@/cad/loadGltf';
 import { makeDemoAssembly } from '@/cad/demo';
 import { planSequence } from './peel';
-import { canSweepOut, collectPartGeoms, feasibleDirections, rankedDirections } from './feasibility';
+import { canSweepOut, collectPartGeoms, feasibleDirections, rankedDirections, rankedDirectionsDetailed, resetContactCache } from './feasibility';
 
 const { root, name } = makeDemoAssembly();
 const { assembly, scene } = buildAssemblyFromScene(root as THREE.Group, 'demo://x', { name });
@@ -132,5 +132,96 @@ describe('peel loop on the demo gearbox', () => {
     // Not an assertion — the console output IS the spike deliverable.
     console.log('\nPLANNED SEQUENCE (demo gearbox):\n' + lines.join('\n'));
     expect(lines.length).toBeGreaterThan(0);
+  });
+});
+
+describe('QUANTIFIED: contact normals on mating planes (user bug: planes slid past each other)', () => {
+  // Two 100x100 plates stacked in Z, touching face-on-face. The v2 normal
+  // came from ONE closest vertex pair — length ~0, direction noise — so the
+  // planner had no idea the mating plane existed and happily chose a lateral
+  // slide. These tests pin the QUANTITATIVE contract of the v3 fix.
+  const mk = () => {
+    const root = new THREE.Group();
+    root.name = 'plates';
+    const geo = new THREE.BoxGeometry(100, 100, 10);
+    const bottom = new THREE.Mesh(geo.clone(), new THREE.MeshStandardMaterial());
+    bottom.name = 'Plate_Bottom';
+    bottom.position.set(0, 0, 5);
+    const top = new THREE.Mesh(geo.clone(), new THREE.MeshStandardMaterial());
+    top.name = 'Plate_Top';
+    top.position.set(0, 0, 15.05); // 0.05mm gap: clean mate, no penetration
+    root.add(bottom, top);
+    return buildAssemblyFromScene(root, 'demo://plates', { name: 'plates' });
+  };
+
+  it('finds the mating plane: push-out is +Z with a large coherent patch', () => {
+    const { assembly: asm, scene: sc } = mk();
+    const idx2 = indexScene(sc, asm);
+    resetContactCache();
+    const geoms = collectPartGeoms(idx2);
+    const remaining = new Map(geoms);
+    const top = Object.values(asm.parts).find((p) => p.name === 'Plate_Top')!;
+    const det = rankedDirectionsDetailed([top.id], remaining, geoms);
+
+    // Contact detected, with a real patch (many samples), coherent votes.
+    expect(det.contacts.length).toBe(1);
+    expect(det.contacts[0].samples).toBeGreaterThan(10);
+    expect(det.contacts[0].coherence).toBeGreaterThan(0.8);
+    // The push-out vector points UP off the mating face.
+    expect(det.pushMag).toBeGreaterThan(3);
+    const push = det.push.clone().normalize();
+    expect(push.z).toBeGreaterThan(0.9);
+    // And the ranking puts +Z first.
+    expect(det.scores[0].dir).toBe('+Z');
+  });
+
+  it('the PLAN separates the mating pair ALONG the mate axis, not across it', () => {
+    const { assembly: asm, scene: sc } = mk();
+    const idx2 = indexScene(sc, asm);
+    const steps = planSequence(asm, idx2);
+    // Whichever plate the planner moves FIRST is the one with the live
+    // mating contact — its move must be Z (off the face), quantified as
+    // near-perfect alignment, never flagged shear. (The second plate is
+    // then free-floating: no contact data is correct for it.)
+    const first = steps[0];
+    expect(['+Z', '-Z']).toContain(first.dir!);
+    expect(first.audit!.pushMag).toBeGreaterThan(3);
+    expect(first.audit!.align).toBeGreaterThan(0.9);
+    expect(first.audit!.shear).toBe(false);
+    // And its contact evidence names the partner plate with a clean patch.
+    expect(first.audit!.contacts.length).toBe(1);
+    expect(first.audit!.contacts[0].coherence).toBeGreaterThan(0.8);
+  });
+
+  it('a plate SANDWICHED between clamps can only slide laterally — FLAGGED as shear', () => {
+    // Middle plate mated top and bottom by big clamps: the only way out is
+    // lateral — exactly the 'planes slide past each other' move the user
+    // saw. The planner cannot make the move less lateral (it IS the only
+    // feasible direction) but it must MEASURE it: strong contact evidence,
+    // near-zero alignment, shear flag, review language in the reason.
+    const root = new THREE.Group();
+    root.name = 'sandwich';
+    const clampLo = new THREE.Mesh(new THREE.BoxGeometry(160, 160, 20), new THREE.MeshStandardMaterial());
+    clampLo.name = 'Clamp_Lower';
+    clampLo.position.set(0, 0, -10.05);
+    const mid = new THREE.Mesh(new THREE.BoxGeometry(100, 100, 10), new THREE.MeshStandardMaterial());
+    mid.name = 'Plate_Middle';
+    mid.position.set(0, 0, 5);
+    const clampHi = new THREE.Mesh(new THREE.BoxGeometry(160, 160, 20), new THREE.MeshStandardMaterial());
+    clampHi.name = 'Clamp_Upper';
+    clampHi.position.set(0, 0, 20.05);
+    root.add(clampLo, mid, clampHi);
+    const { assembly: asm, scene: sc } = buildAssemblyFromScene(root, 'demo://sandwich', { name: 'sandwich' });
+    const idx2 = indexScene(sc, asm);
+    const steps = planSequence(asm, idx2);
+    const midStep = steps.find((s) =>
+      s.parts.some((p) => asm.parts[p]?.name === 'Plate_Middle') && !s.unplanned);
+    expect(midStep).toBeDefined();
+    expect(['+X', '-X', '+Y', '-Y']).toContain(midStep!.dir!);
+    // Contact evidence exists (two mates) but mostly cancels vertically;
+    // whatever remains, the chosen lateral move must score low alignment
+    // and be flagged for review.
+    expect(midStep!.audit!.shear).toBe(true);
+    expect(midStep!.reason).toContain('SHEAR');
   });
 });
