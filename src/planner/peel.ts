@@ -26,15 +26,16 @@
 import type { Assembly } from '@/domain/schema';
 import {
   collectPartGeoms,
-  feasibleDirections,
+  feasibleVector,
   rankedDirectionsDetailed,
-  removalDistance,
+  removalDistanceVec,
   resetContactCache,
-  DIR_VEC,
+  DIR_ORDER,
   type ContactRecord,
   type Dir,
   type PartGeom,
 } from './feasibility';
+import { plannerConfig } from './config';
 import * as THREE from 'three';
 
 /** Quantitative decision record carried by every planned step (no guessing:
@@ -61,6 +62,13 @@ export interface PlannedStep {
   /** Mesh ids that move in this step (a unit's meshes, or an identical batch). */
   parts: string[];
   dir: Dir | null;
+  /** v4: the actual escape vector (unit). `dir` keeps the axis label when the
+   * vector is canonical; for oblique vectors dir is null and `dirLabel`
+   * carries the display form. */
+  vec?: [number, number, number];
+  dirLabel?: string;
+  /** Where the winning direction came from (audit): axis/contact/push/step-plane. */
+  dirSource?: string;
   /** World-mm travel for the authored motion. */
   distance: number;
   /** Human-readable label ("SUB_Cover", "4× Bolt_M8"). */
@@ -147,7 +155,15 @@ export function planSequence(
   resetContactCache();
   const geoms = collectPartGeoms(index);
   const remaining = new Map<string, PartGeom>(geoms);
-  const forest = buildUnitForest(assembly, geoms);
+  const forest = plannerConfig().hierarchy
+    ? buildUnitForest(assembly, geoms)
+    : [...geoms.keys()].map((id) => ({
+        nodeId: id,
+        name: assembly.parts[id]?.name ?? id,
+        meshes: [id],
+        children: [],
+        depth: 0,
+      }));
   const steps: PlannedStep[] = [];
   let round = 0;
 
@@ -160,7 +176,15 @@ export function planSequence(
      * unit (largest wins because parents are tried before children). Then
      * batch its identical free siblings.
      */
-    type Candidate = { unit: Unit; dir: Dir; parent: Unit | null; volume: number; audit: StepAudit };
+    type Candidate = {
+      unit: Unit;
+      vec: THREE.Vector3;
+      label: string;
+      source: string;
+      parent: Unit | null;
+      volume: number;
+      audit: StepAudit;
+    };
     const candidates: Candidate[] = [];
 
     const visit = (units: Unit[], parent: Unit | null): void => {
@@ -178,21 +202,19 @@ export function planSequence(
           visit(u.children, u);
           continue;
         }
-        const dirs = feasibleDirections(u.meshes, remaining, geoms);
-        if (dirs.length) {
+        const fv = feasibleVector(u.meshes, remaining, geoms);
+        if ((globalThis as Record<string, unknown>).__peelTrace) ((globalThis as Record<string, unknown>).__peelTrace as unknown[]).push({ round, name: u.name, n: u.meshes.length, dirs: fv ? fv.candidate.label : '' });
+        if (fv) {
           let volume = 0;
           for (const m of u.meshes) volume += geoms.get(m)?.volume ?? 0;
 
           // Quantify the decision (user: 'no more guessing').
           const det = rankedDirectionsDetailed(u.meshes, remaining, geoms);
-          const alignOf = (d: Dir) =>
+          const chosenVec = fv.candidate.vec;
+          const align =
             det.pushMag > 1e-6
-              ? det.push.clone().normalize().dot(DIR_VEC[d])
+              ? det.push.clone().normalize().dot(chosenVec)
               : 0;
-          const feasibleScored = dirs.map((d) => ({ dir: d.dir, align: alignOf(d.dir) }));
-          // Among FEASIBLE directions, take the best contact-aligned one.
-          feasibleScored.sort((a, b) => b.align - a.align);
-          const chosen = feasibleScored[0];
           // Total contact evidence (sum of patch weights) vs the NET push:
           // a sandwiched part has strong contacts that cancel (pushMag ~0),
           // and that is STILL a shear situation when the move is lateral.
@@ -201,15 +223,25 @@ export function planSequence(
           const audit: StepAudit = {
             push: [det.push.x, det.push.y, det.push.z],
             pushMag: det.pushMag,
-            align: chosen.align,
+            align,
             contacts: det.contacts,
-            feasible: feasibleScored,
+            feasible: [{ dir: fv.candidate.label as Dir, align }],
             // Meaningful contact evidence but the chosen direction moves
             // ACROSS it (align < 0.35 ~ >70° off the push-out) — the
             // 'planes slide past each other' pattern, flagged for review.
-            shear: totalContact > 3 && chosen.align < 0.35,
+            // With vector candidates (contact normals tried FIRST) a shear
+            // now only happens when geometry truly forces it.
+            shear: totalContact > 3 && align < 0.35,
           };
-          candidates.push({ unit: u, dir: chosen.dir, parent, volume, audit });
+          candidates.push({
+            unit: u,
+            vec: chosenVec.clone(),
+            label: fv.candidate.label,
+            source: fv.candidate.source,
+            parent,
+            volume,
+            audit,
+          });
           // Feasible whole: don't descend — the unit leaves as one piece.
           continue;
         }
@@ -240,10 +272,11 @@ export function planSequence(
       break;
     }
 
-    const { unit, dir, parent } = found as Candidate;
+    const { unit, vec, label: dirLabel, source, parent } = found as Candidate;
 
     // ---- identical-sibling batching, feasibility-partitioned: only the
-    // siblings that are THEMSELVES free along the same dir this round.
+    // siblings that are THEMSELVES free along (approximately) the same
+    // vector this round. ~15° cone (dot > 0.966).
     const sibs = (parent ? parent.children : forest).filter(
       (s) =>
         s !== unit &&
@@ -253,8 +286,8 @@ export function planSequence(
     );
     const batch: Unit[] = [unit];
     for (const s of sibs) {
-      const dirs = feasibleDirections(s.meshes, remaining, geoms);
-      if (dirs.length && dirs[0].dir === dir) batch.push(s);
+      const sfv = feasibleVector(s.meshes, remaining, geoms);
+      if (sfv && sfv.candidate.vec.dot(vec) > 0.966) batch.push(s);
     }
 
     const meshes = batch.flatMap((b) => b.meshes);
@@ -263,21 +296,32 @@ export function planSequence(
     const kind =
       unit.children.length > 0 || unit.meshes.length > 1 ? 'sub-assembly' : 'part';
     const { audit } = found;
-    // Human-readable evidence in the review reason: alignment says how well
-    // the move agrees with the mating contacts (1 = straight off the face).
-    const evidence =
-      audit.pushMag > 1e-6
-        ? `contact alignment ${audit.align.toFixed(2)}${audit.shear ? ' — SHEAR: moves across a mating face, review' : ''}`
+    // Human-readable evidence. NOTE: keyed off contact EVIDENCE, not the net
+    // push-out — a sandwiched part's opposing mates cancel to pushMag≈0 while
+    // still being maximal contact; calling that 'free-floating' hid the
+    // shear warning from the review reason (caught by the sandwich fixture).
+    const totalEvidence = audit.contacts.reduce(
+      (n, c) => n + c.samples * Math.min(c.coherence, 1), 0);
+    const evidence = audit.shear
+      ? `SHEAR: moves across a mating face (alignment ${audit.align.toFixed(2)}), review`
+      : totalEvidence > 3
+        ? `contact alignment ${audit.align.toFixed(2)}`
         : 'no contact data (free-floating)';
+    const srcNote = source === 'axis' ? '' : ` [${source} normal]`;
+    // Canonical-axis label keeps the Dir field for back-compat consumers.
+    const asDir = (DIR_ORDER as readonly string[]).includes(dirLabel) ? (dirLabel as Dir) : null;
     steps.push({
       parts: meshes,
-      dir,
-      distance: removalDistance(meshes, dir, remaining, geoms),
+      dir: asDir,
+      vec: [vec.x, vec.y, vec.z],
+      dirLabel,
+      dirSource: source,
+      distance: removalDistanceVec(meshes, vec, remaining, geoms),
       label,
       reason:
         batch.length > 1
-          ? `${batch.length} identical ${kind === 'sub-assembly' ? 'sub-assemblies' : 'parts'} free along ${dir}; ${evidence} (round ${round})`
-          : `${kind} free along ${dir}; ${evidence} (round ${round})`,
+          ? `${batch.length} identical ${kind === 'sub-assembly' ? 'sub-assemblies' : 'parts'} free along ${dirLabel}${srcNote}; ${evidence} (round ${round})`
+          : `${kind} free along ${dirLabel}${srcNote}; ${evidence} (round ${round})`,
       round,
       audit,
     });

@@ -20,6 +20,7 @@
  */
 import * as THREE from 'three';
 import { computeBoundsTree, acceleratedRaycast, MeshBVH } from 'three-mesh-bvh';
+import { plannerConfig } from './config';
 
 // Register BVH acceleration once.
 (THREE.BufferGeometry.prototype as unknown as { computeBoundsTree?: unknown }).computeBoundsTree ||= computeBoundsTree;
@@ -182,8 +183,6 @@ function intersectsAt(moving: PartGeom, offset: THREE.Vector3, fixed: PartGeom):
 
 /** Contact epsilon in mm: face-on-face assembly contact must not read as a crash. */
 const CONTACT_EPS = 0.25;
-/** Sweep sampling density: samples per part-bbox-length of travel. */
-const SAMPLES_PER_LENGTH = 4;
 /**
  * Hard cap on distance between sweep samples (mm). Without it, sample count
  * scales off the MOVER's size, and a long part hops over thin walls between
@@ -294,8 +293,16 @@ interface RestContact {
 const CONTACT_NEAR = 0.8;
 
 const _restContacts = new Map<string, RestContact | null>();
+/**
+ * ORDERED key — found the hard way. The record is ASYMMETRIC (depth is
+ * a-into-b, normal points away from b), but the key was unordered, so the
+ * first caller's orientation won the cache slot and every later caller in
+ * the opposite orientation read reversed data. Symptom: SUB_Cover feasible
+ * in isolation, infeasible inside planSequence (different cache fill
+ * order). Plans were call-order-dependent — poison for the bake-off.
+ */
 function pairKey(a: string, b: string): string {
-  return a < b ? `${a}|${b}` : `${b}|${a}`;
+  return a + '->' + b;
 }
 
 /**
@@ -391,6 +398,29 @@ function restContactOf(a: PartGeom, b: PartGeom): RestContact | null {
   }
 
   /**
+   * Contact normal, three selectable methods (bake-off, see config.ts):
+   *  - 'gradient': clearance gradient — probe ±1.5mm per axis, direction
+   *    that opens the gap fastest (tessellation-independent).
+   *  - 'triangles': mating-triangle reconstruction — cluster a's triangles
+   *    facing b within CONTACT_NEAR by their own normals; the dominant
+   *    cluster's area-weighted normal is the mate normal.
+   *  - 'none': baseline — no contact steering at all.
+   */
+  const method = plannerConfig().normals;
+
+  if (method === 'none') {
+    const rec0: RestContact = { depth, normal: new THREE.Vector3(0, 0, 1), samples, rawMag: 0 };
+    _restContacts.set(key, rec0);
+    return rec0;
+  }
+
+  if (method === 'triangles') {
+    const rec1 = triangleMateNormal(a, b, _matRel, samples, depth);
+    _restContacts.set(key, rec1);
+    return rec1;
+  }
+
+  /**
    * Contact normal via the CLEARANCE GRADIENT (v3 — quantified fix).
    *
    * v2 used the closest-vertex-pair difference vector: on face-on-face
@@ -457,6 +487,97 @@ function restContactOf(a: PartGeom, b: PartGeom): RestContact | null {
 }
 
 export const __dbgPenetration = penetrationDepth;
+
+/**
+ * Mating-triangle reconstruction ('triangles' bake-off variant).
+ *
+ * Walks a's triangles; each whose CENTROID lies within CONTACT_NEAR of b's
+ * surface is a mating triangle. Mating triangles cluster by their own face
+ * normal (~15° cones); the winning cluster (by summed area) defines the
+ * mate plane, and its area-weighted normal — oriented AWAY from b — is the
+ * escape direction. Reads the plane straight out of the tessellation, the
+ * user's 'compare the triangles that are mating' technique.
+ */
+function triangleMateNormal(
+  a: PartGeom,
+  b: PartGeom,
+  matRel: THREE.Matrix4,
+  samples: number,
+  depth: number,
+): RestContact {
+  const bvh = bvhOf(b.mesh.geometry as THREE.BufferGeometry);
+  const aGeom = a.mesh.geometry as THREE.BufferGeometry;
+  const pos = aGeom.attributes.position;
+  const idx = aGeom.index;
+  const triCount = idx ? idx.count / 3 : pos.count / 3;
+  const target = { point: new THREE.Vector3(), distance: 0, faceIndex: 0 };
+
+  const scaleB = new THREE.Vector3();
+  b.mesh.matrixWorld.decompose(new THREE.Vector3(), new THREE.Quaternion(), scaleB);
+  const suB = Math.abs(scaleB.x) || 1;
+
+  const p0 = new THREE.Vector3();
+  const p1 = new THREE.Vector3();
+  const p2 = new THREE.Vector3();
+  const centroid = new THREE.Vector3();
+  const e1 = new THREE.Vector3();
+  const e2 = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const toB = new THREE.Vector3();
+
+  interface Cluster { normal: THREE.Vector3; area: number }
+  const clusters: Cluster[] = [];
+
+  const stride = Math.max(1, Math.floor(triCount / 1500));
+  for (let t = 0; t < triCount; t += stride) {
+    const i0 = idx ? idx.getX(t * 3) : t * 3;
+    const i1 = idx ? idx.getX(t * 3 + 1) : t * 3 + 1;
+    const i2 = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+    p0.fromBufferAttribute(pos, i0).applyMatrix4(matRel);
+    p1.fromBufferAttribute(pos, i1).applyMatrix4(matRel);
+    p2.fromBufferAttribute(pos, i2).applyMatrix4(matRel);
+    centroid.copy(p0).add(p1).add(p2).multiplyScalar(1 / 3);
+
+    bvh.closestPointToPoint(centroid, target);
+    if (target.distance * suB > CONTACT_NEAR) continue;
+
+    // Face normal (b-local frame; fine for clustering, converted at the end)
+    n.crossVectors(e1.subVectors(p1, p0), e2.subVectors(p2, p0));
+    const area2 = n.length();
+    if (area2 < 1e-12) continue;
+    n.divideScalar(area2);
+    // Orient away from b's surface at the contact.
+    toB.subVectors(centroid, target.point);
+    if (toB.lengthSq() > 1e-14 && n.dot(toB) < 0) n.negate();
+
+    let hit = false;
+    for (const c of clusters) {
+      if (c.normal.dot(n) > 0.966) { // ~15° cone
+        c.normal.lerp(n, area2 / (c.area + area2)).normalize();
+        c.area += area2 / 2;
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) clusters.push({ normal: n.clone(), area: area2 / 2 });
+  }
+
+  if (!clusters.length) {
+    return { depth, normal: new THREE.Vector3(0, 0, 1), samples, rawMag: 0 };
+  }
+
+  clusters.sort((x, y) => y.area - x.area);
+  const total = clusters.reduce((s, c) => s + c.area, 0);
+  const dominant = clusters[0];
+  // Confidence = dominant cluster's share of mating area (1 = one clean
+  // plane, low = wrapping/curved contact with no single escape plane).
+  const rawMag = dominant.area / total;
+
+  const normal = dominant.normal.clone();
+  normal.applyMatrix4(new THREE.Matrix4().extractRotation(b.mesh.matrixWorld));
+  normal.normalize();
+  return { depth, normal, samples, rawMag };
+}
 
 /** Clear cached rest contacts (fresh model). */
 export function resetContactCache(): void {
@@ -574,17 +695,25 @@ export function rankedDirectionsDetailed(
 }
 
 /**
- * Can `movingIds` (as one rigid unit) sweep along `dir` until fully clear of
- * the AABB of everything remaining?
+ * Can `movingIds` (as one rigid unit) sweep along an ARBITRARY unit vector
+ * until fully clear of everything remaining?
+ *
+ * v4: directions are no longer restricted to ±X/±Y/±Z (user: "why can't we
+ * back off XY on a 45 if our mating plane is perpendicular to that?").
+ * The pair-first interval optimization generalizes: for each axis with
+ * v[axis]≠0 the travel interval where the AABBs can overlap is closed-form;
+ * the pair's active interval is the INTERSECTION across axes, and axes with
+ * v[axis]=0 must overlap statically or the pair never meets.
  */
-export function canSweepOut(
+export function canSweepOutVec(
   movingIds: string[],
-  dir: Dir,
+  vec: THREE.Vector3,
   remaining: Map<string, PartGeom>,
   geoms: Map<string, PartGeom>,
 ): SweepResult {
   const moving = movingIds.map((id) => geoms.get(id)!).filter(Boolean);
   if (!moving.length) return { ok: false };
+  const v = _sweepDir.copy(vec).normalize();
 
   const movingSet = new Set(movingIds);
   const fixed: PartGeom[] = [];
@@ -596,78 +725,49 @@ export function canSweepOut(
   }
   if (!fixed.length) return { ok: true };
 
-  // Travel distance: enough that the moving unit's box fully clears the
-  // remaining assembly's box along dir.
   const unitBox = new THREE.Box3();
   for (const g of moving) unitBox.union(g.aabb);
-  const v = DIR_VEC[dir];
-  const axis = v.x !== 0 ? 'x' : v.y !== 0 ? 'y' : 'z';
-  const travel =
-    v[axis] > 0
-      ? restBox.max[axis] - unitBox.min[axis]
-      : unitBox.max[axis] - restBox.min[axis];
+
+  // Travel to fully clear the remaining assembly's box: boxes separate as
+  // soon as ANY axis separates -> exit distance = min over axes of that
+  // axis' separation distance (axes with v=0 never separate -> Infinity).
+  const travel = exitDistance(unitBox, restBox, v);
   if (travel <= 0) return { ok: true }; // already clear
+  if (!Number.isFinite(travel)) return { ok: false }; // cannot clear along v
 
-  const unitLen = Math.max(unitBox.max[axis] - unitBox.min[axis], 1);
-  const samples = Math.max(
-    3,
-    Math.ceil((travel / unitLen) * SAMPLES_PER_LENGTH),
-    Math.ceil(travel / MAX_SAMPLE_STEP), // tunneling guard: never hop >2.5mm
-  );
-
-  /**
-   * Budget tolerance: rest depth + 30% + 0.6mm. The slack absorbs edge-
-   * sample jitter (probes land on different points at each offset, ±0.5mm
-   * on the gearbox gasket); real plowing deepens by many mm and still trips.
-   * Original tighter budget (15%+0.1) false-blocked the bolt extraction. Sliding OUT of a hole keeps
-   * penetration ≤ rest depth (legal); any move that deepens contact exceeds
-   * the budget immediately (blocked). Pairs with no rest contact have budget
-   * 0 — plain honest collision detection.
-   *
-   * PERFORMANCE: pair-first, not sample-first. For each (mover, fixed) pair
-   * the axis interval of d where their AABBs can overlap is computed in
-   * closed form; pairs whose boxes never meet along the travel cost ZERO
-   * narrow-phase tests, and the rest are sampled only inside their interval
-   * (≤2.5mm steps, capped). Sample-first scanning made dense STEP meshes
-   * take minutes; this makes them take seconds.
-   */
   const offset = new THREE.Vector3();
-  const o1 = axis === 'x' ? 'y' : 'x';
-  const o2 = axis === 'z' ? 'y' : 'z';
   for (const m of moving) {
     for (const f of fixed) {
-      // Off-axis AABB overlap never changes during an axis sweep.
-      if (
-        m.aabb.max[o1] < f.aabb.min[o1] - CONTACT_EPS ||
-        m.aabb.min[o1] > f.aabb.max[o1] + CONTACT_EPS ||
-        m.aabb.max[o2] < f.aabb.min[o2] - CONTACT_EPS ||
-        m.aabb.min[o2] > f.aabb.max[o2] + CONTACT_EPS
-      ) {
-        continue;
+      // Per-pair travel interval where AABBs can overlap: intersect the
+      // per-axis intervals. Static-axis (v≈0) mismatch = never meets.
+      let dMin = -Infinity;
+      let dMax = Infinity;
+      let disjoint = false;
+      for (const axis of AXES) {
+        const va = v[axis];
+        if (Math.abs(va) < 1e-9) {
+          if (
+            m.aabb.max[axis] < f.aabb.min[axis] - CONTACT_EPS ||
+            m.aabb.min[axis] > f.aabb.max[axis] + CONTACT_EPS
+          ) {
+            disjoint = true;
+            break;
+          }
+          continue;
+        }
+        // Overlap on this axis while: f.min - m.max <= d*va <= f.max - m.min
+        const lo = (f.aabb.min[axis] - m.aabb.max[axis]) / va;
+        const hi = (f.aabb.max[axis] - m.aabb.min[axis]) / va;
+        dMin = Math.max(dMin, Math.min(lo, hi));
+        dMax = Math.min(dMax, Math.max(lo, hi));
       }
-      // 1-D interval of travel d where the boxes overlap on the sweep axis.
-      const dirSign = v[axis];
-      let dMin: number;
-      let dMax: number;
-      if (dirSign > 0) {
-        dMin = f.aabb.min[axis] - m.aabb.max[axis];
-        dMax = f.aabb.max[axis] - m.aabb.min[axis];
-      } else {
-        dMin = m.aabb.min[axis] - f.aabb.max[axis];
-        dMax = m.aabb.max[axis] - f.aabb.min[axis];
-      }
-      const start = Math.max(dMin + CONTACT_EPS, travel / samples);
+      if (disjoint || dMax <= dMin) continue;
+
+      const start = Math.max(dMin + CONTACT_EPS, MAX_SAMPLE_STEP / 2);
       const end = Math.min(dMax - CONTACT_EPS, travel);
       if (end <= start) continue;
 
       const span = end - start;
-      // Rest contact decided upfront (cached): it sets both the penetration
-      // budget AND the sampling density. Non-touching pairs use fine steps
-      // with the cheap boolean test only; touching pairs use sparse steps
-      // (plow violations are deep and persistent — 12 samples across the
-      // overlap catch them) and a light probe budget. This is what took the
-      // faucet plan from 260s to seconds: fine-stepped FULL penetration
-      // scans on every legal sliding sample were the entire cost.
       const rc = restContactOf(m, f);
       const budget = rc ? rc.depth * 1.3 + 0.6 : 0;
       const n = budget > 0
@@ -685,6 +785,34 @@ export function canSweepOut(
     }
   }
   return { ok: true };
+}
+
+const _sweepDir = new THREE.Vector3();
+const AXES = ['x', 'y', 'z'] as const;
+
+/** Distance along v at which `unitBox` fully clears `restBox` (Infinity when
+ * it cannot — v has no component on any separating axis). */
+export function exitDistance(unitBox: THREE.Box3, restBox: THREE.Box3, v: THREE.Vector3): number {
+  let best = Infinity;
+  for (const axis of AXES) {
+    const va = v[axis];
+    if (Math.abs(va) < 1e-9) continue;
+    const d = va > 0
+      ? (restBox.max[axis] - unitBox.min[axis]) / va
+      : (restBox.min[axis] - unitBox.max[axis]) / va;
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/** Canonical-axis compatibility wrapper over the vector kernel. */
+export function canSweepOut(
+  movingIds: string[],
+  dir: Dir,
+  remaining: Map<string, PartGeom>,
+  geoms: Map<string, PartGeom>,
+): SweepResult {
+  return canSweepOutVec(movingIds, DIR_VEC[dir], remaining, geoms);
 }
 
 /**
@@ -706,6 +834,99 @@ export function feasibleDirections(
   return out;
 }
 
+/** A candidate escape vector with provenance (for the audit trail). */
+export interface VecCandidate {
+  vec: THREE.Vector3;
+  /** Where this direction came from: canonical axis, a mating-contact
+   * normal, the aggregate push-out, or a STEP B-rep plane normal. */
+  source: 'axis' | 'contact' | 'push' | 'step-plane';
+  /** Display label: '+Z' or '(0.71, 0.71, 0)'. */
+  label: string;
+}
+
+const CANONICAL: VecCandidate[] = DIR_ORDER.map((d) => ({
+  vec: DIR_VEC[d].clone(),
+  source: 'axis' as const,
+  label: d,
+}));
+
+export function labelForVec(v: THREE.Vector3): string {
+  for (const d of DIR_ORDER) {
+    if (v.dot(DIR_VEC[d]) > 0.999) return d;
+  }
+  return `(${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)})`;
+}
+
+/**
+ * Build the candidate escape-direction set for a unit (v4):
+ *  - the six canonical axes (always)
+ *  - each mating contact's normal — "back off the vector of the mating
+ *    surface", the user's 45° case: a plane tilted 45° in XY contributes
+ *    exactly its normal as a candidate
+ *  - the aggregate push-out vector (multi-contact compromise direction)
+ *  - STEP B-rep plane normals when the importer extracted them (both signs)
+ * Deduped at ~10° (dot > 0.985). Order: contacts/push/step first (they carry
+ * geometric intent), canonical axes as the fallback tail.
+ */
+export function candidateVectors(
+  movingIds: string[],
+  remaining: Map<string, PartGeom>,
+  geoms: Map<string, PartGeom>,
+  stepPlaneNormals?: [number, number, number][],
+): VecCandidate[] {
+  const det = rankedDirectionsDetailed(movingIds, remaining, geoms);
+  const out: VecCandidate[] = [];
+  const seen: THREE.Vector3[] = [];
+  const push = (vec: THREE.Vector3, source: VecCandidate['source']) => {
+    if (vec.lengthSq() < 1e-9) return;
+    const u = vec.clone().normalize();
+    for (const s of seen) if (s.dot(u) > 0.985) return; // ~10° dedupe
+    seen.push(u);
+    out.push({ vec: u, source, label: labelForVec(u) });
+  };
+
+  // Geometric-intent candidates first (skipped in axes-only baseline mode).
+  const useMating = plannerConfig().directions === 'mating-vectors';
+  if (useMating) for (const c of det.contacts) {
+    if (c.coherence > 0.3) push(new THREE.Vector3(...c.normal), 'contact');
+  }
+  if (useMating && det.pushMag > 1e-6) push(det.push.clone(), 'push');
+  if (useMating) for (const n of stepPlaneNormals ?? []) {
+    push(new THREE.Vector3(...n), 'step-plane');
+    push(new THREE.Vector3(-n[0], -n[1], -n[2]), 'step-plane');
+  }
+  // Canonical tail.
+  for (const c of CANONICAL) push(c.vec, 'axis');
+
+  // Rank by alignment with the push-out (geometry's opinion), stable within.
+  if (det.pushMag > 1e-6) {
+    const u = det.push.clone().normalize();
+    out.sort((a, b) => u.dot(b.vec) - u.dot(a.vec));
+  }
+  return out;
+}
+
+/**
+ * First feasible escape vector for a unit, searching geometric-intent
+ * candidates before canonical axes. Returns the full candidate + evidence.
+ */
+export function feasibleVector(
+  movingIds: string[],
+  remaining: Map<string, PartGeom>,
+  geoms: Map<string, PartGeom>,
+  stepPlaneNormals?: [number, number, number][],
+): { candidate: VecCandidate; tried: number } | null {
+  const candidates = candidateVectors(movingIds, remaining, geoms, stepPlaneNormals);
+  let tried = 0;
+  for (const c of candidates) {
+    tried++;
+    if (canSweepOutVec(movingIds, c.vec, remaining, geoms).ok) {
+      return { candidate: c, tried };
+    }
+  }
+  return null;
+}
+
 /** Removal travel for authoring: clear the assembly plus a readable margin. */
 export function removalDistance(
   movingIds: string[],
@@ -713,6 +934,18 @@ export function removalDistance(
   remaining: Map<string, PartGeom>,
   geoms: Map<string, PartGeom>,
 ): number {
+  return removalDistanceVec(movingIds, DIR_VEC[dir], remaining, geoms);
+}
+
+/** Vector form: travel until the unit's AABB fully clears the remaining
+ * assembly's AABB along v, plus a readable margin. */
+export function removalDistanceVec(
+  movingIds: string[],
+  vec: THREE.Vector3,
+  remaining: Map<string, PartGeom>,
+  geoms: Map<string, PartGeom>,
+): number {
+  const v = vec.clone().normalize();
   const movingSet = new Set(movingIds);
   const restBox = new THREE.Box3();
   let any = false;
@@ -726,13 +959,10 @@ export function removalDistance(
     const g = geoms.get(id);
     if (g) unitBox.union(g.aabb);
   }
-  const v = DIR_VEC[dir];
-  const axis = v.x !== 0 ? 'x' : v.y !== 0 ? 'y' : 'z';
-  const unitLen = Math.max(unitBox.max[axis] - unitBox.min[axis], 5);
+  const size = unitBox.getSize(new THREE.Vector3());
+  const unitLen = Math.max(Math.abs(size.x * v.x) + Math.abs(size.y * v.y) + Math.abs(size.z * v.z), 5);
   if (!any) return unitLen * 1.5;
-  const travel =
-    v[axis] > 0
-      ? restBox.max[axis] - unitBox.min[axis]
-      : unitBox.max[axis] - restBox.min[axis];
+  const travel = exitDistance(unitBox, restBox, v);
+  if (!Number.isFinite(travel)) return unitLen * 1.5;
   return Math.max(travel, 0) + unitLen * 0.75;
 }

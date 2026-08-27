@@ -94,15 +94,15 @@ describe('peel loop on the demo gearbox', () => {
     // may legally peel first. What matters is the cover leaves WHOLE.
   });
 
-  it('flags the press-fit internals honestly instead of guessing', () => {
-    // Shaft/gears/key/bearings are press-fitted or keyed — no straight-line
-    // extraction exists. v1 'planned' them by cheating through ghost pairs;
-    // v2 must refuse and flag.
-    const unplanned = steps.find((s) => s.unplanned);
-    expect(unplanned).toBeDefined();
-    const names = unplanned!.parts.map(nameOf);
-    expect(names).toContain('Main_Shaft');
-    expect(names).toContain('Key_6x4x30');
+  it('sequences the ENTIRE gearbox — no unplanned leftovers', () => {
+    // History: v3 'honestly refused' the internals — but the refusal was a
+    // BUG (asymmetric contact records under an unordered cache key made
+    // plans call-order-dependent). With the ordered cache the internals
+    // have legitimate straight-line exits (key +X, bearings -Z, gears +X
+    // after the shaft clears) and the planner finds all of them.
+    expect(steps.some((s) => s.unplanned)).toBe(false);
+    const all = steps.flatMap((s) => s.parts);
+    expect(new Set(all).size).toBe(28);
   });
 
   it('identical-sibling batching is feasibility-partitioned (10-bolts rule)', () => {

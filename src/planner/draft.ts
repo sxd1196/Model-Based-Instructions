@@ -25,6 +25,11 @@ import type { PlannedStep } from './peel';
 
 const uid = () => crypto.randomUUID();
 
+const vecOf = (step: PlannedStep): THREE.Vector3 | null =>
+  step.vec ? new THREE.Vector3(...step.vec)
+  : step.dir ? DIR_VEC[step.dir].clone()
+  : null;
+
 const DIR_WORD: Record<string, string> = {
   '+X': 'out along +X', '-X': 'out along −X',
   '+Y': 'out along +Y', '-Y': 'out along −Y',
@@ -40,7 +45,8 @@ function instructionFor(step: PlannedStep): string {
     );
   }
   const qty = step.parts.length > 1 && step.label.includes('×') ? step.label : `the ${step.label}`;
-  return `Remove ${qty} — ${DIR_WORD[step.dir!] ?? step.dir} until clear.`;
+  const how = step.dir ? (DIR_WORD[step.dir] ?? step.dir) : `along ${step.dirLabel ?? "its release direction"}`;
+  return `Remove ${qty} — ${how} until clear.`;
 }
 
 /** World AABB centre + radius of a part set (for camera framing). */
@@ -75,21 +81,16 @@ function cameraFor(
 
   // Radius must cover the assembly AND the parked position of the mover.
   const parked = moverCentre.clone();
-  if (step.dir) {
-    const v = DIR_VEC[step.dir];
-    parked.addScaledVector(v, step.distance);
-  }
+  const pv = vecOf(step);
+  if (pv) parked.addScaledVector(pv, step.distance);
   const frameR = Math.max(
     assemblyRadius * 1.45,
     subject.distanceTo(parked) * 1.15,
   );
 
   const view = new THREE.Vector3(1, -1, 0.65);
-  if (step.dir) {
-    const d = DIR_VEC[step.dir];
-    if (Math.abs(view.clone().normalize().dot(d)) > 0.75) {
-      view.set(-1, -1, 0.65);
-    }
+  if (pv && Math.abs(view.clone().normalize().dot(pv)) > 0.75) {
+    view.set(-1, -1, 0.65);
   }
   const position = subject.clone().add(view.normalize().multiplyScalar(frameR * 2.1));
   return {
@@ -124,28 +125,73 @@ export function draftOperations(
   const operations: Operation[] = [];
   const unplannedOpIds: string[] = [];
   let lastCamCentre: THREE.Vector3 | null = null;
+  // Parked-part AABBs accumulated as steps are authored (see park v3 note).
+  const parkedBoxes: { box: THREE.Box3; vec: THREE.Vector3 }[] = [];
 
   steps.forEach((step, i) => {
     const id = uid();
 
     /**
-     * Park distance (v2): assembly-scaled and STAGGERED by removal order,
-     * exploded-view style. v1 parked at clearance + 3/4 part-length — a
-     * bolt parked 20mm from a 500mm machine ("nowhere near far enough"),
-     * and every round parked at the same shell, leaving early parts sitting
-     * inside later parts' escape paths. Staggering by round means each
-     * wave lands one shell farther out than the last.
+     * Park distance (v3 — parked parts are now OBSTACLES).
+     *
+     * v2 staggered park shells by round and hoped that kept lanes clear.
+     * The bake-off oracle measured the hope failing: gearbox step 9 drove
+     * the housing +Z straight through the cover parked at the +Z shell two
+     * rounds earlier (40.75mm penetration, evidence in the report). The
+     * planner only ever checked REMAINING parts; parked parts were ghosts.
+     *
+     * Fix: accumulate every parked part's AABB. For each new step, grow the
+     * park distance until (a) the mover's final AABB overlaps no parked
+     * AABB, and (b) the swept corridor from assembly to park overlaps no
+     * parked AABB whose own lane differs. Both checks are conservative
+     * (AABB-level, +5mm margin) — coarse but cheap and, unlike v2,
+     * measured by the oracle instead of assumed.
      */
-    const parkDistance = step.unplanned
+    const stepVecEarly = vecOf(step);
+    let parkDistance = step.unplanned
       ? 0
       : Math.max(step.distance, assemblyRadius * 0.55) +
         assemblyRadius * 0.3 * (step.round - 1);
+    if (!step.unplanned && stepVecEarly) {
+      const moverBox = new THREE.Box3();
+      for (const pid of step.parts) {
+        const g = geoms.get(pid);
+        if (g) moverBox.union(g.aabb);
+      }
+      const MARGIN = 5;
+      const corridorClear = (dist: number): boolean => {
+        // Corridor = mover box swept from 0 to dist along the vector.
+        const swept = moverBox.clone();
+        const end = moverBox.clone().translate(stepVecEarly.clone().multiplyScalar(dist));
+        swept.union(end);
+        swept.expandByScalar(MARGIN);
+        const final = end.expandByScalar(MARGIN);
+        for (const parked of parkedBoxes) {
+          if (final.intersectsBox(parked.box)) return false;
+          // Corridor conflict only matters when the parked part is not
+          // travelling the same lane (same-lane parts left earlier and sit
+          // FARTHER out by construction once the final check passes).
+          if (parked.vec.dot(stepVecEarly) < 0.9 && swept.intersectsBox(parked.box)) return false;
+        }
+        return true;
+      };
+      let guard = 0;
+      while (!corridorClear(parkDistance) && guard < 40) {
+        parkDistance += assemblyRadius * 0.25;
+        guard++;
+      }
+      parkedBoxes.push({
+        box: moverBox.clone().translate(stepVecEarly.clone().multiplyScalar(parkDistance)),
+        vec: stepVecEarly.clone(),
+      });
+    }
 
     // ---- tracks: pure world translation dir*distance, expressed per parent
     // cluster with the SAME math a gizmo drag commits (bolt-circle safe).
     const tracks: Track[] = [];
-    if (!step.unplanned && step.dir) {
-      const v = DIR_VEC[step.dir];
+    const stepVec = stepVecEarly;
+    if (!step.unplanned && stepVec) {
+      const v = stepVec;
       const delta: [number, number, number] = [
         v.x * parkDistance, v.y * parkDistance, v.z * parkDistance,
       ];
