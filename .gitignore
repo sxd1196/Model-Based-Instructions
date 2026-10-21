@@ -36,6 +36,12 @@ coverage
 *.gltf
 !src/**/*.glb
 
+# EXCEPTION: the tiny generated STEP test fixtures MUST be tracked, or
+# importCad.test.ts fails in every fresh clone (8 tests). They are ~15KB each
+# and deterministic — regenerate with `npm run fixtures`.
+!src/cad/fixtures/*.step
+!src/cad/fixtures/*.stp
+
 # Exported artifacts
 *.webm
 *.assemblyproj.json
