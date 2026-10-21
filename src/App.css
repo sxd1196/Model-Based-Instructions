@@ -464,3 +464,68 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: #2f3542; border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: #3d4557; }
+
+/* ---- Demo model picker ------------------------------------------------ */
+/* Anchored dropdown off the topbar button. Kept here (not a component
+   stylesheet) because App.css owns topbar chrome. */
+.demo-wrap { position: relative; display: inline-block; }
+
+.demo-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 290px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+.demo-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.demo-menu button:hover { background: var(--line); }
+
+.demo-menu-head {
+  padding: 6px 8px 3px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.demo-menu-foot {
+  padding: 7px 8px 4px;
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.demo-menu-foot code { font-size: 10px; }
+
+/* Flags the 36MB arm assemblies: real industrial CAD, slow to parse. */
+.demo-tag {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}

@@ -1,0 +1,52 @@
+{
+  "$comment": "Demo model manifest. The .step files themselves are NOT in git (see .gitignore) — run `npm run fetch:models` to download them from the upstream source below. Checksums pin exact revisions so a fetch is reproducible.",
+  "sources": {
+    "rebot": {
+      "name": "reBot-DevArm",
+      "description": "Seeed Studio open-source 6-axis developer robot arm. OSHWA certified (CN000024).",
+      "repo": "https://github.com/Seeed-Projects/reBot-DevArm",
+      "commit": "9e8634ca0b20403c580903b771da952b17361c27",
+      "license": "CERN-OHL-W-2.0",
+      "licenseUrl": "https://cern.ch/cern-ohl",
+      "rawBase": "https://raw.githubusercontent.com/Seeed-Projects/reBot-DevArm/9e8634ca0b20403c580903b771da952b17361c27/"
+    }
+  },
+  "models": [
+    {
+      "id": "camera-mount",
+      "label": "Camera Mount (9 parts)",
+      "file": "camera-mount.stp",
+      "source": "rebot",
+      "remotePath": "hardware/camera-mounts/data-collection-camera-mounts/data-collection-camera-mount-v2.stp",
+      "bytes": 1636518,
+      "sha256": "08d7d3ad5de129c4ecc4fc410a52be2d11821d01b74bd2cb764cc7fae66a4758",
+      "stats": { "solids": 9, "assemblyNodes": 9, "assemblyLinks": 8, "cylindricalFaces": 121, "conicalFaces": 0 },
+      "weight": "light",
+      "note": "2020 aluminium extrusion rail plus printed adapters. Small, fast, real B-rep — use this one for day-to-day iteration."
+    },
+    {
+      "id": "arm-dm",
+      "label": "reBot B601 Arm — DM (133 solids)",
+      "file": "rebot-arm-dm.step",
+      "source": "rebot",
+      "remotePath": "hardware/reBot_B601_DM/reBot_B601_DM_v1.1_20260625.step",
+      "bytes": 37678786,
+      "sha256": "e99525ef0d2af1ab00a4dd6febc1904f345228d9965aa60638f9bb61fa1bb9da",
+      "stats": { "solids": 133, "assemblyNodes": 82, "assemblyLinks": 287, "cylindricalFaces": 3309, "conicalFaces": 1346 },
+      "weight": "heavy",
+      "note": "Full 6-axis arm, direct-drive variant. Nested BOM: 00-ARM_ASM -> 01-BASE_ASM, 02..06-LINK_ASM, 07-GRIPPER_ASM. 36MB — parsing takes a while."
+    },
+    {
+      "id": "arm-rs",
+      "label": "reBot B601 Arm — RS (136 solids)",
+      "file": "rebot-arm-rs.step",
+      "source": "rebot",
+      "remotePath": "hardware/reBot_B601_RS/reBot_B601_RS_v1.0_20260625.step",
+      "bytes": 37921121,
+      "sha256": "40c2b7c134ea7471f79861abf537bd02ba2f5da4bd36f0526e1891cad5a1f771",
+      "stats": { "solids": 136, "assemblyNodes": 84, "assemblyLinks": 289, "cylindricalFaces": 3303, "conicalFaces": 1390 },
+      "weight": "heavy",
+      "note": "Same arm, rotary-series joint variant. Useful as a second revision of the same product — the rev-survival case."
+    }
+  ]
+}

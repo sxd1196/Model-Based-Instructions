@@ -15,7 +15,9 @@
     "postinstall": "node scripts/sync-wasm.mjs",
     "prebuild": "node scripts/sync-wasm.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "fetch:models": "node scripts/fetch-models.mjs",
     "verify:drag": "node scripts/verify-drag.mjs",
+    "verify:models": "node scripts/verify-models.mjs",
     "verify:lanes": "node scripts/verify-lanes.mjs",
     "verify:popout": "node scripts/verify-popout.mjs",
     "verify:section": "node scripts/verify-section.mjs"

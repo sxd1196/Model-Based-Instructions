@@ -21,6 +21,26 @@ import { makeDemoAssembly } from '@/cad/demo';
 import { usePopout } from '@/ui/usePopout';
 import './App.css';
 
+/** Shape of public/models/index.json — the demo CAD manifest. */
+interface DemoSource {
+  name: string;
+  repo: string;
+  license: string;
+  commit: string;
+}
+interface DemoModel {
+  id: string;
+  label: string;
+  file: string;
+  weight: 'light' | 'heavy';
+  note: string;
+  stats: { solids: number; assemblyNodes: number; assemblyLinks: number };
+}
+interface DemoManifest {
+  sources?: Record<string, DemoSource>;
+  models?: DemoModel[];
+}
+
 export default function App() {
   const [scene, setScene] = useState<THREE.Object3D | null>(null);
   const [diagonal, setDiagonal] = useState(200);
@@ -96,10 +116,92 @@ export default function App() {
     [ingest, setLoading, setWarnings],
   );
 
+  /**
+   * Demo picker: the procedural gearbox plus real industrial STEP assemblies
+   * listed in public/models/index.json.
+   *
+   * The .step files are NOT in git — `npm run fetch:models` downloads them
+   * from their upstream project (see docs/CAD-PIPELINE.md). A missing file is
+   * the expected state in a fresh clone, so say so plainly rather than
+   * failing with a parse error on an HTML 404 body.
+   *
+   * State is declared before the handlers that close over it — the React
+   * compiler treats reading a setter above its own declaration as a
+   * use-before-init and bails out of optimizing the whole component.
+   */
+  const [demoPickerOpen, setDemoPickerOpen] = useState(false);
+  const [demoModels, setDemoModels] = useState<DemoModel[]>([]);
+  const [demoSource, setDemoSource] = useState<DemoSource | null>(null);
+
   const openDemo = useCallback(() => {
     const { root, name } = makeDemoAssembly();
     ingest(root, 'demo://gearbox', name, 'built-in demo');
-  }, [ingest]);
+    setDemoPickerOpen(false);
+  }, [ingest, setDemoPickerOpen]);
+
+  useEffect(() => {
+    if (!demoPickerOpen || demoModels.length) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch(`${import.meta.env.BASE_URL}models/index.json`);
+        if (!res.ok) return;
+        const manifest = (await res.json()) as DemoManifest;
+        if (cancelled) return;
+        setDemoModels(manifest.models ?? []);
+        setDemoSource(manifest.sources?.rebot ?? null);
+      } catch {
+        // Manifest is optional — the gearbox always works without it.
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [demoPickerOpen, demoModels.length]);
+
+  const openStepDemo = useCallback(
+    async (model: DemoModel) => {
+      setDemoPickerOpen(false);
+      setLoading(true);
+      try {
+        const url = `${import.meta.env.BASE_URL}models/${model.file}`;
+        const res = await fetch(url);
+        const notFetched = new Error(
+          `${model.file} isn't downloaded yet. Run \`npm run fetch:models -- ${model.id}\` ` +
+          `in the project folder, then reload.`,
+        );
+        if (!res.ok) throw notFetched;
+
+        const buffer = await res.arrayBuffer();
+        /**
+         * A missing file under public/ does NOT 404 — the dev server's SPA
+         * fallback answers 200 with index.html, so res.ok proves nothing.
+         * Check the STEP Part 21 magic instead, or occt-import-js reports a
+         * meaningless parse error on an HTML body.
+         */
+        const head = new TextDecoder().decode(
+          new Uint8Array(buffer, 0, Math.min(64, buffer.byteLength)),
+        );
+        if (!head.includes('ISO-10303-21')) throw notFetched;
+
+        setWarnings([
+          `Reading ${model.file} with OpenCascade — ${model.stats.solids} solids, ` +
+            `this can take a moment on the large arms.`,
+        ]);
+        const result = await importCadFile(buffer, model.file);
+        ingest(result.scene, url, model.label, model.file);
+        if (result.warnings.length) {
+          setWarnings((prev) => [...result.warnings, ...prev.slice(0, 2)]);
+        }
+      } catch (err) {
+        setWarnings([(err as Error).message]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [ingest, setLoading, setWarnings, setDemoPickerOpen],
+  );
 
   const openProject = useCallback(
     async (file: File) => {
@@ -264,7 +366,35 @@ export default function App() {
           />
         </label>
 
-        <button className="btn" onClick={openDemo}>Demo model</button>
+        <div className="demo-wrap">
+          <button className="btn" onClick={() => setDemoPickerOpen((v) => !v)}>
+            Demo model ▾
+          </button>
+          {demoPickerOpen && (
+            <div className="demo-menu">
+              <div className="demo-menu-head">Built-in</div>
+              <button onClick={openDemo}>Gearbox (procedural, ~30 parts)</button>
+              {demoModels.length > 0 && (
+                <>
+                  <div className="demo-menu-head">Industrial STEP assemblies</div>
+                  {demoModels.map((m) => (
+                    <button key={m.id} onClick={() => void openStepDemo(m)} title={m.note}>
+                      {m.label}
+                      {m.weight === 'heavy' && <span className="demo-tag">heavy</span>}
+                    </button>
+                  ))}
+                  {demoSource && (
+                    <div className="demo-menu-foot">
+                      CAD from {demoSource.name} · {demoSource.license}
+                      <br />
+                      Missing? <code>npm run fetch:models -- --all</code>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
 
         <div className="spacer" />
 
@@ -316,12 +446,14 @@ export default function App() {
             {!sequence && !loading && (
               <div className="overlay welcome">
                 <h2>Assembly Studio</h2>
-                <p>Open a <b>.glb</b> / <b>.gltf</b> assembly, or try the demo model.</p>
+                <p>Open a <b>.step</b> / <b>.glb</b> assembly, or try a demo model.</p>
                 <p className="small">
                   Drop a <b>.step</b> file straight in — no conversion needed.<br />
                   Export each solid as a <b>separate named object</b> — do not merge.
                 </p>
-                <button className="btn big" onClick={openDemo}>Load demo model</button>
+                <button className="btn big" onClick={() => setDemoPickerOpen(true)}>
+                  Load a demo model
+                </button>
               </div>
             )}
             <Viewport
