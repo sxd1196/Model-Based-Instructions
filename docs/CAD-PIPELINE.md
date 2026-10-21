@@ -1,6 +1,11 @@
-# CAD Pipeline: STEP / SLDASM → glTF
+# CAD Pipeline: getting your assembly into the app
 
 Everything here is free and open source.
+
+STEP (`.step` / `.stp`) imports **directly** in the browser via `occt-import-js`
+(OpenCascade compiled to WASM) — no conversion step. The glTF routes below remain
+valid and are still the fastest path for very large assemblies, or when you want
+to pre-bake a lighter mesh.
 
 ## The one thing that will ruin your day
 
@@ -148,3 +153,68 @@ mesh; those wrappers are collapsed so each part appears ONCE in the tree.
 Renaming instances in CAD before export is still better practice — the suffix
 is assigned by encounter order, which can change if the file is re-exported
 with parts reordered.
+
+## Demo models: provenance and licensing (2026-10-20)
+
+`npm run fetch:models` downloads real industrial B-rep STEP assemblies into
+`public/models/`. Driven by `public/models/index.json`; implemented in
+`scripts/fetch-models.mjs`.
+
+### Why fetched, not committed
+
+The arm assemblies are ~36MB each. Three reasons they are not in git:
+
+1. **Clone weight.** Git stores large binaries badly and they are permanent.
+2. **Licensing.** The upstream files are CERN-OHL-W-2.0. That licence's
+   reciprocity obligations attach to *distribution*. Because every user pulls
+   from the original repository, this project never redistributes them and
+   carries no obligation — and attribution stays pointed at the authors.
+3. **Reproducibility.** The manifest pins a commit SHA *and* a sha256 per file.
+   A mismatch is a hard failure, never a silent accept, because the part counts
+   below were measured against those exact bytes.
+
+`*.step` / `*.stp` are gitignored repo-wide, so a fetched model can never be
+committed by accident. `index.json` is tracked.
+
+### What you get
+
+Source: [Seeed-Projects/reBot-DevArm](https://github.com/Seeed-Projects/reBot-DevArm)
+@ `9e8634ca` · CERN-OHL-W-2.0 · OSHWA certified CN000024
+
+| id | File | Size | Solids | Asm nodes | Asm links | Cyl faces | Cone faces |
+|---|---|---|---|---|---|---|---|
+| `camera-mount` | camera-mount.stp | 1.6MB | 9 | 9 | 8 | 121 | 0 |
+| `arm-dm` | rebot-arm-dm.step | 36MB | 133 | 82 | 287 | 3309 | 1346 |
+| `arm-rs` | rebot-arm-rs.step | 36MB | 136 | 84 | 289 | 3303 | 1390 |
+
+```bash
+npm run fetch:models                  # light only (camera-mount)
+npm run fetch:models -- --all         # everything
+npm run fetch:models -- arm-dm        # one by id
+```
+
+### Why these models
+
+They are **native B-rep**, not tessellated meshes dressed up as STEP. That
+distinction is the whole point for planner work: a hole in these files *knows*
+its axis, so mate direction can be read instead of guessed. The cylindrical and
+conical face counts above are the raw material for that.
+
+The two arm variants are also the same product at two revisions — the
+rev-survival case in ROADMAP.
+
+### Sources deliberately NOT used
+
+- **McMaster-Carr** — their Terms and Conditions prohibit reproducing,
+  retaining, redistributing or making available the CAD models. A public repo
+  (or a fetch script pointed at their servers) violates that. They are also
+  single components, not multi-level assemblies.
+- **CAx-IF production models** — real aerospace/automotive assemblies, but the
+  test suites state they "may not be publicly released for any purpose."
+- **GrabCAD / TraceParts / vendor part portals** — free to download, generally
+  not free to redistribute. Same problem as McMaster.
+- **Assemble-Them-All benchmarks** — permissive, and still used by the planner
+  bake-off on the feature branch, but they are *meshes*. Useless for B-rep work.
+
+If you add a model, record its licence here and confirm redistribution or
+fetch-linking is actually permitted. "It was a free download" is not a licence.
