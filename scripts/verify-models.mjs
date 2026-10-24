@@ -75,17 +75,66 @@ try {
 
   await page.screenshot({ path: join(OUT, 'models-step-loaded.png') });
 
-  // 3. A model that was never fetched must explain itself.
+  /**
+   * 3. The not-yet-fetched path.
+   *
+   * Only meaningful when the model really is absent, so ask the server first
+   * instead of assuming. An earlier version hard-coded "the arms aren't
+   * downloaded" and started failing the moment someone ran
+   * `fetch:models --all` — a state-dependent test that reported an app bug
+   * when the app was fine.
+   *
+   * Note a missing file under public/ answers 200 + index.html (SPA
+   * fallback), so presence means 200 AND the STEP magic — the same check the
+   * app itself makes.
+   */
+  const armPresent = await page.evaluate(async () => {
+    try {
+      const r = await fetch('models/rebot-arm-dm.step', { headers: { Range: 'bytes=0-63' } });
+      if (!r.ok) return false;
+      return (await r.text()).includes('ISO-10303-21');
+    } catch {
+      return false;
+    }
+  });
+
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByRole('button', { name: /demo model/i }).first().click();
   await page.getByRole('button', { name: /reBot B601 Arm — DM/i }).click();
-  const warned = await page
-    .getByText(/fetch:models/i)
-    .first()
-    .waitFor({ timeout: 30_000 })
-    .then(() => true)
-    .catch(() => false);
-  record('missing model reports fetch:models instead of a parse error', warned);
+
+  if (armPresent) {
+    // Present: it must actually parse, and must NOT claim to be missing.
+    const loaded = await page
+      .waitForFunction(
+        () => {
+          const s = window.__store?.getState?.();
+          const n = s?.sequence?.assembly?.parts;
+          return n ? Object.keys(n).length > 50 : false;
+        },
+        // Poll on a timer, NOT the default requestAnimationFrame: parsing a
+        // 36MB STEP blocks the main thread for ~30s, RAF callbacks are
+        // starved, and the wait reported failure while the model had in fact
+        // loaded (367 meshes read immediately afterwards).
+        { timeout: 600_000, polling: 1000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+    const count = await page.evaluate(() => {
+      const p = window.__store?.getState?.()?.sequence?.assembly?.parts;
+      return p ? Object.values(p).filter((x) => !x.isGroup).length : 0;
+    });
+    // index.json records 133 solids for arm-dm.
+    record('heavy arm assembly parses (present on disk)', loaded && count > 100, `${count} meshes`);
+    await page.screenshot({ path: join(OUT, 'models-arm-loaded.png') });
+  } else {
+    const warned = await page
+      .getByText(/fetch:models/i)
+      .first()
+      .waitFor({ timeout: 30_000 })
+      .then(() => true)
+      .catch(() => false);
+    record('missing model reports fetch:models instead of a parse error', warned);
+  }
 
   record('no uncaught page errors', errors.length === 0, errors.slice(0, 2).join(' | '));
 } catch (err) {
